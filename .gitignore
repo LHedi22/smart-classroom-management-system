@@ -1,0 +1,60 @@
+# ── Python ────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+.venv/
+venv/
+env/
+.Python
+pip-log.txt
+pip-delete-this-directory.txt
+*.log
+
+# ── Node ──────────────────────────────────────────────────────────────────
+node_modules/
+dist/
+.npm
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+frontend/dist/
+
+# ── Arduino / ESP32 ───────────────────────────────────────────────────────
+firmware/**/*.hex
+firmware/**/*.elf
+firmware/**/*.bin
+firmware/**/*.map
+firmware/**/build/
+
+# ── Environment & secrets ─────────────────────────────────────────────────
+.env
+*.env.local
+*.env.*.local
+secrets/
+
+# ── Docker ────────────────────────────────────────────────────────────────
+docker-compose.override.yml
+
+# ── IDE / OS ──────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# ── Alembic ───────────────────────────────────────────────────────────────
+alembic/versions/*.pyc
+
+# ── Test & coverage ───────────────────────────────────────────────────────
+.pytest_cache/
+.coverage
+htmlcov/

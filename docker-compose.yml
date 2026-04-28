@@ -1,0 +1,85 @@
+services:
+  # ── PostgreSQL 15 ────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:15-alpine
+    container_name: smartcam-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: smartclassroom
+      POSTGRES_USER: smartcam
+      POSTGRES_PASSWORD: smartcam
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U smartcam -d smartclassroom"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── Redis 7 ──────────────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: smartcam-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── MariaDB (Moodle sidecar) ──────────────────────────────────────────────
+  mariadb:
+    image: mariadb:10.6
+    container_name: smartcam-mariadb
+    restart: unless-stopped
+    environment:
+      MARIADB_ROOT_PASSWORD: moodlerootpass
+      MARIADB_DATABASE: moodle
+      MARIADB_USER: moodle
+      MARIADB_PASSWORD: moodlepass
+    volumes:
+      - mariadb_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "moodle", "-pmoodlepass"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+
+  # ── Moodle 4.x (Bitnami) ─────────────────────────────────────────────────
+  moodle:
+    image: bitnami/moodle:4
+    container_name: smartcam-moodle
+    restart: unless-stopped
+    depends_on:
+      mariadb:
+        condition: service_healthy
+    ports:
+      - "8080:8080"
+    environment:
+      MOODLE_DATABASE_TYPE: mariadb
+      MOODLE_DATABASE_HOST: mariadb
+      MOODLE_DATABASE_PORT_NUMBER: 3306
+      MOODLE_DATABASE_NAME: moodle
+      MOODLE_DATABASE_USER: moodle
+      MOODLE_DATABASE_PASSWORD: moodlepass
+      MOODLE_USERNAME: admin
+      MOODLE_PASSWORD: admin123
+      MOODLE_EMAIL: admin@smartcam.local
+      MOODLE_SITE_NAME: "SMU Smart Classroom"
+      BITNAMI_DEBUG: "false"
+    volumes:
+      - moodle_data:/bitnami/moodle
+      - moodledata_data:/bitnami/moodledata
+
+volumes:
+  postgres_data:
+  redis_data:
+  mariadb_data:
+  moodle_data:
+  moodledata_data:

@@ -61,7 +61,8 @@
       "Bash(curl -s -X POST http://localhost:8000/api/auth/login -d 'username=s.trabelsi@smu.tn&password=prof123' -H 'Content-Type: application/x-www-form-urlencoded')",
       "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); [print\\(f\\\\\"  {k}: avg={v['avg']} min={v['min']} max={v['max']}\\\\\"\\) for k,v in d.items\\(\\) if k!='session_id']\")",
       "Bash(curl -s -X POST http://localhost:8000/api/auth/login -d 'username=admin@smu.tn&password=admin123' -H 'Content-Type: application/x-www-form-urlencoded')",
-      "Bash(python3 -c ' *)"
+      "Bash(python3 -c ' *)",
+      "Bash(npx skills *)"
     ]
   }
 }

@@ -1,11 +1,11 @@
 import { useState, useEffect } from 'react'
 import client from '../api/client'
 
-const STATUS_COLORS = {
-  present: 'bg-green-900 text-green-300',
-  absent:  'bg-gray-700  text-gray-300',
-  late:    'bg-yellow-900 text-yellow-300',
-  excused: 'bg-blue-900  text-blue-300',
+const STATUS_CLASSES = {
+  present: 'status-chip-success',
+  absent:  'status-chip-danger',
+  late:    'status-chip-warning',
+  excused: 'status-chip-neutral',
 }
 
 function fmt(iso) {
@@ -27,12 +27,44 @@ function exportCsv(records, sessionId) {
   URL.revokeObjectURL(url)
 }
 
+// ── Stat pill ─────────────────────────────────────────────────────────────
+
+function StatPill({ label, value, valueColor }) {
+  return (
+    <div style={{
+      borderRadius: 10,
+      border: '1px solid var(--color-border)',
+      background: 'var(--color-surface)',
+      padding: '10px 16px',
+    }}>
+      <p style={{ fontSize: 11, fontWeight: 600, color: 'var(--color-text-muted)', textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 3 }}>{label}</p>
+      <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 20, fontWeight: 700, color: valueColor ?? 'var(--color-text-primary)', letterSpacing: '-0.02em' }}>{value}</p>
+    </div>
+  )
+}
+
+// ── Empty chair SVG ───────────────────────────────────────────────────────
+
+function EmptyChairSVG() {
+  return (
+    <svg width="64" height="64" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <rect x="10" y="20" width="44" height="6" rx="3" fill="var(--color-border)" />
+      <rect x="18" y="26" width="28" height="22" rx="4" fill="rgba(221,227,237,0.6)" stroke="var(--color-border)" strokeWidth="1.5"/>
+      <rect x="14" y="48" width="6" height="10" rx="3" fill="var(--color-border)" />
+      <rect x="44" y="48" width="6" height="10" rx="3" fill="var(--color-border)" />
+      <rect x="12" y="10" width="40" height="12" rx="4" fill="rgba(221,227,237,0.6)" stroke="var(--color-border)" strokeWidth="1.5"/>
+    </svg>
+  )
+}
+
+// ── Page ──────────────────────────────────────────────────────────────────
+
 export default function Attendance() {
-  const [sessions, setSessions]     = useState([])
-  const [sessionId, setSessionId]   = useState('')
-  const [records, setRecords]       = useState([])
-  const [editingId, setEditingId]   = useState(null)
-  const [loading, setLoading]       = useState(false)
+  const [sessions,   setSessions]   = useState([])
+  const [sessionId,  setSessionId]  = useState('')
+  const [records,    setRecords]    = useState([])
+  const [editingId,  setEditingId]  = useState(null)
+  const [loading,    setLoading]    = useState(false)
 
   useEffect(() => {
     client.get('/sessions').then(r => {
@@ -64,79 +96,87 @@ export default function Attendance() {
   }
 
   const session = sessions.find(s => s.id === sessionId)
+  const present = records.filter(r => r.status === 'present').length
+  const absent  = records.filter(r => r.status === 'absent').length
+  const late    = records.filter(r => r.status === 'late').length
 
   return (
-    <div className="p-6 space-y-5">
-      <div className="flex items-center justify-between">
-        <h1 className="text-xl font-bold text-white">Attendance</h1>
-        <div className="flex items-center gap-3">
-          <select
-            value={sessionId}
-            onChange={e => setSessionId(e.target.value)}
-            className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-white focus:outline-none focus:border-indigo-500"
-          >
-            {sessions.map(s => (
-              <option key={s.id} value={s.id}>
-                {s.course?.code ?? 'Session'} — {new Date(s.started_at).toLocaleDateString()}
-                {s.status === 'active' ? ' (live)' : ''}
-              </option>
-            ))}
-          </select>
-          <button
-            onClick={markAllAbsent}
-            className="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-white text-sm rounded-lg"
-          >
-            Mark absent
-          </button>
-          <button
-            onClick={() => exportCsv(records, sessionId)}
-            className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white text-sm rounded-lg"
-          >
-            Export CSV
-          </button>
+    <div className="page-shell">
+      {/* Page header */}
+      <section className="page-header-card">
+        <div className="page-header-row">
+          <h1 className="section-title">Attendance</h1>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button onClick={markAllAbsent} className="btn-secondary">Mark absent</button>
+            <button onClick={() => exportCsv(records, sessionId)} className="btn-primary">Export CSV</button>
+          </div>
         </div>
-      </div>
 
-      {session && (
-        <div className="flex gap-4 text-sm text-gray-400">
-          <span>Course: <span className="text-white">{session.course?.name ?? '—'}</span></span>
-          <span>Present: <span className="text-green-400">{session.present_count}</span></span>
-          <span>Total: <span className="text-white">{session.total_students}</span></span>
-          <span className={`ml-auto px-2 py-0.5 rounded text-xs font-medium ${
-            session.status === 'active' ? 'bg-green-900 text-green-300' : 'bg-gray-700 text-gray-300'
-          }`}>{session.status}</span>
-        </div>
-      )}
+        {/* Session selector */}
+        <select
+          value={sessionId}
+          onChange={e => setSessionId(e.target.value)}
+          className="field-control"
+          style={{ maxWidth: 480 }}
+        >
+          {sessions.map(s => (
+            <option key={s.id} value={s.id}>
+              {s.course?.code ?? 'Session'} — {new Date(s.started_at).toLocaleDateString()}
+              {s.status === 'active' ? ' · live' : ''}
+            </option>
+          ))}
+        </select>
 
-      <div className="bg-gray-900 rounded-xl border border-gray-800 overflow-hidden">
+        {/* Session stats */}
+        {session && (
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(120px, 1fr))', gap: 10 }}>
+            <StatPill label="Course"  value={session.course?.code ?? '—'} />
+            <StatPill label="Present" value={present} valueColor="var(--color-forest)" />
+            <StatPill label="Absent"  value={absent}  valueColor="var(--color-red)" />
+            <StatPill label="Late"    value={late}     valueColor="#7A5B00" />
+            <StatPill label="Total"   value={session.total_students ?? records.length} />
+          </div>
+        )}
+      </section>
+
+      {/* Attendance table */}
+      <section className="table-shell" style={{ flex: 1 }}>
         {loading ? (
-          <div className="flex items-center justify-center h-40 text-gray-500 text-sm">Loading…</div>
+          <div style={{ padding: 24, display: 'flex', flexDirection: 'column', gap: 10 }}>
+            {[1,2,3,4].map(i => <div key={i} className="skeleton" style={{ height: 44, borderRadius: 8, opacity: 0.8 - i * 0.12 }} />)}
+          </div>
         ) : records.length === 0 ? (
-          <div className="flex items-center justify-center h-40 text-gray-600 text-sm">No records</div>
+          <div className="empty-state">
+            <EmptyChairSVG />
+            <p className="empty-state-title">No attendance records</p>
+            <p className="empty-state-desc">
+              Records appear as students are recognized, or click "Mark absent" to fill in missing students.
+            </p>
+          </div>
         ) : (
-          <table className="w-full text-sm">
+          <table style={{ width: '100%', fontSize: 13, borderCollapse: 'collapse' }}>
             <thead>
-              <tr className="text-xs text-gray-500 border-b border-gray-800">
-                <th className="text-left px-4 py-3 font-medium">Student Name</th>
-                <th className="text-left px-4 py-3 font-medium">Student ID</th>
-                <th className="text-left px-4 py-3 font-medium">Status</th>
-                <th className="text-left px-4 py-3 font-medium">Detected At</th>
-                <th className="text-left px-4 py-3 font-medium">Note</th>
+              <tr className="table-head-row">
+                <th style={{ textAlign: 'left', padding: '11px 16px' }}>Student</th>
+                <th style={{ textAlign: 'left', padding: '11px 16px' }}>ID</th>
+                <th style={{ textAlign: 'left', padding: '11px 16px' }}>Status</th>
+                <th style={{ textAlign: 'left', padding: '11px 16px' }}>Detected at</th>
+                <th style={{ textAlign: 'left', padding: '11px 16px' }}>Note</th>
               </tr>
             </thead>
             <tbody>
               {records.map(rec => (
-                <tr key={rec.id} className="border-b border-gray-800/50 hover:bg-gray-800/30">
-                  <td className="px-4 py-2.5 text-white font-medium">{rec.student_name}</td>
-                  <td className="px-4 py-2.5 text-gray-400 font-mono text-xs">{rec.student_number}</td>
-                  <td className="px-4 py-2.5">
+                <tr key={rec.id} className="table-row">
+                  <td style={{ padding: '12px 16px', fontWeight: 600, color: 'var(--color-text-primary)' }}>{rec.student_name}</td>
+                  <td style={{ padding: '12px 16px', color: 'var(--color-text-muted)', fontFamily: 'monospace', fontSize: 12 }}>{rec.student_number}</td>
+                  <td style={{ padding: '12px 16px' }}>
                     {editingId === rec.id ? (
                       <select
                         autoFocus
                         defaultValue={rec.status}
                         onChange={e => updateStatus(rec.id, e.target.value)}
                         onBlur={() => setEditingId(null)}
-                        className="bg-gray-700 text-white text-xs rounded px-2 py-1 focus:outline-none"
+                        className="field-control-sm"
                       >
                         {['present', 'absent', 'late', 'excused'].map(s => (
                           <option key={s} value={s}>{s}</option>
@@ -144,17 +184,19 @@ export default function Attendance() {
                       </select>
                     ) : (
                       <button
+                        title="Click to edit"
                         onClick={() => setEditingId(rec.id)}
-                        className={`text-xs px-2 py-0.5 rounded-full font-medium ${STATUS_COLORS[rec.status]}`}
+                        className={STATUS_CLASSES[rec.status]}
+                        style={{ cursor: 'pointer', border: 'none', background: 'inherit', font: 'inherit', padding: 'inherit', borderRadius: 'inherit', transition: 'opacity 0.15s' }}
                       >
                         {rec.status}
                       </button>
                     )}
                   </td>
-                  <td className="px-4 py-2.5 text-gray-400 text-xs">{fmt(rec.detected_at)}</td>
-                  <td className="px-4 py-2.5 text-xs">
+                  <td style={{ padding: '12px 16px', color: 'var(--color-text-muted)', fontSize: 12 }}>{fmt(rec.detected_at)}</td>
+                  <td style={{ padding: '12px 16px', fontSize: 12 }}>
                     {rec.adjusted_by && (
-                      <span className="text-yellow-500">Adjusted by professor</span>
+                      <span style={{ color: '#7A5B00', fontWeight: 600, fontSize: 11 }}>Adjusted by professor</span>
                     )}
                   </td>
                 </tr>
@@ -162,7 +204,7 @@ export default function Attendance() {
             </tbody>
           </table>
         )}
-      </div>
+      </section>
     </div>
   )
 }

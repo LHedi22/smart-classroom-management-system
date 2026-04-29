@@ -66,14 +66,18 @@ smart-classroom/
 │
 ├── frontend/                        ← React + Vite + Tailwind
 │   ├── src/
+│   │   ├── tokens.css               ← NEW Phase 18: CSS custom property design token system (single source of truth)
+│   │   ├── index.css                ← MODIFIED Phase 18: all component classes; no glassmorphism; references tokens.css vars only
 │   │   ├── pages/
-│   │   │   ├── Dashboard.jsx
-│   │   │   ├── Attendance.jsx
-│   │   │   ├── Control.jsx
-│   │   │   ├── Enrollment.jsx
-│   │   │   └── History.jsx
+│   │   │   ├── Dashboard.jsx        ← MODIFIED Phase 18: AreaChart sparklines, icon circles, token-based stat cards
+│   │   │   ├── Attendance.jsx       ← MODIFIED Phase 18: StatPills, illustrated empty state, skeleton loader
+│   │   │   ├── Control.jsx          ← MODIFIED Phase 18: tactile relay buttons, sensor pills, auto-rule card
+│   │   │   ├── Enrollment.jsx       ← MODIFIED Phase 18: purple avatar list, camera preview, thumbnail grid
+│   │   │   ├── History.jsx          ← MODIFIED Phase 18: attendance breakdown bar, course filter, chevron expand
+│   │   │   └── Login.jsx            ← MODIFIED Phase 18: branded left panel, click-to-fill demo accounts
 │   │   ├── components/
-│   │   │   └── DemoModeBanner.jsx   ← NEW Phase 11: shown when WS has no data
+│   │   │   ├── Layout.jsx           ← MODIFIED Phase 18: 240px blue sidebar, inline SVG nav icons, white active border
+│   │   │   └── DemoModeBanner.jsx   ← MODIFIED Phase 18/11: token-based warning banner
 │   │   ├── hooks/
 │   │   │   └── useLiveSensors.js    ← MODIFIED Phase 11: falls back to mock generator after 5s disconnect
 │   │   └── api/
@@ -131,10 +135,12 @@ smart-classroom/
 
 ### Frontend
 - **Framework:** React 18 + Vite
-- **Styling:** TailwindCSS
-- **Charts:** Recharts
+- **Styling:** TailwindCSS v3 + CSS custom properties design token system (`tokens.css`)
+- **Typography:** DM Sans (headings, 600/700) + Inter (body, 400/500) via Google Fonts
+- **Charts:** Recharts (`AreaChart` + `linearGradient` fill for sparklines)
 - **Real-time:** Native WebSocket via custom hook
 - **HTTP client:** axios
+- **Design system:** `tokens.css` — single source of truth for all colors, shadows, and type scale; all component classes in `index.css` reference CSS vars only; no hardcoded hex values outside `tokens.css`
 
 ### Infrastructure
 - **MQTT Broker:** Mosquitto 2 (Docker — `eclipse-mosquitto:2`, anonymous, port 1883)
@@ -423,6 +429,7 @@ The frontend independently detects whether live WebSocket data is arriving. If n
 | Phase 15 | Docker image slim — DeepFace/TF removed; FACE_RECOGNITION_ENABLED stub; seed.py self-migrating | ✅ |
 | Phase 16 | Professor Dashboard — session list (live/upcoming/done) + attendance table + sensor cards/sparklines | ✅ |
 | Phase 17 | Dashboard bug fixes — total_enrolled from detail endpoint, key-based tab state reset, session count badges, MOCK_MODE enabled | ✅ |
+| Phase 18 | Full frontend visual redesign — CSS token system, DM Sans + Inter typography, blue sidebar, Soft Structuralism design language, all pages redesigned | ✅ |
 
 > **Update this table at the end of every phase.** Change ⬜ to ✅ when complete, 🔄 when in progress.
 
@@ -478,6 +485,14 @@ The frontend independently detects whether live WebSocket data is arriving. If n
 | key={session.id} on tab components forces full remount on session switch | More reliable than resetting individual useEffect states; React unmounts and remounts the component, guaranteeing clean slate without stale-data flash between sessions | Phase 17 |
 | MOCK_MODE=true set in docker-compose.yml | Development without ESP32 hardware needs mock MQTT publisher to populate sensor_readings table; otherwise sensors tab shows "No data" for all sessions | Phase 17 |
 | Session count badges added to left-panel group headers | 31 past sessions require scrolling; without a count indicator users assumed the panel was empty after the visible live/upcoming sessions | Phase 17 |
+| tokens.css as design token source of truth, separate from index.css | Tailwind v3 does not resolve CSS vars in arbitrary bracket values at build time; keeping tokens in a dedicated CSS file loaded before index.css lets component classes in index.css reference vars via `var(--color-*)` without Tailwind's build step | Phase 18 |
+| CSS class names preserved, visual output changed | Renaming `.glass-card` to `.card` would require touching every JSX file; changing the visual output of existing class names (removing backdrop-filter, updating colors) achieves the redesign with zero JSX churn | Phase 18 |
+| Glassmorphism removed entirely | backdrop-filter: blur() is expensive on the GPU, causes rendering artifacts in some Chromium versions, and undermines the "clean surfaces" design archetype chosen for this project | Phase 18 |
+| Inline SVG components instead of an icon library | No icon library is in package.json; installing one adds bundle weight and a new dependency; the 10–12 icons needed are simple enough to write inline as functional components | Phase 18 |
+| LineChart → AreaChart with linearGradient fill | AreaChart gives more visual weight to the sparkline while using identical Recharts data shape; linearGradient fill (opaque at top, transparent at bottom) communicates trend direction more clearly than a bare line | Phase 18 |
+| DemoRow uses imperative onMouseEnter/Leave for hover colors | CSS hover pseudo-class cannot reference CSS vars in Tailwind v3 utility classes; component-level JS event handlers are the escape hatch for token-based hover states that need `var(--color-*)` | Phase 18 |
+| `h-screen` kept on Layout root (not min-h-screen) | Dashboard panels use `h-full` which resolves to 100% of the nearest ancestor with a defined height; changing root to min-h-screen breaks the fixed-height two-panel layout | Phase 18 |
+| AttendanceBar renders proportional flex segments | Each status segment occupies `(count/total)*100%` width inside a `display:flex; overflow:hidden` container; overflow:hidden clips any sub-pixel rounding error that would otherwise overflow the 100% track | Phase 18 |
 
 ---
 

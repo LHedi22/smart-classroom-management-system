@@ -1,0 +1,40 @@
+:root {
+  /* ── Brand palette ─────────────────────────────────────────────── */
+  --color-primary:     #0075C9;
+  --color-secondary:   #007EA4;
+  --color-teal:        #00AFAA;
+  --color-green:       #86C057;
+  --color-forest:      #006450;
+  --color-purple:      #572F87;
+  --color-red:         #EC0044;
+  --color-pink:        #FB7598;
+  --color-yellow:      #FFB700;
+
+  /* ── Surfaces ──────────────────────────────────────────────────── */
+  --color-bg:          #F4F7FB;
+  --color-surface:     #FFFFFF;
+  --color-border:      #DDE3ED;
+  --color-border-strong: #C4CFDF;
+
+  /* ── Text ──────────────────────────────────────────────────────── */
+  --color-text-primary:   #1A2233;
+  --color-text-secondary: #5A6478;
+  --color-text-muted:     #8E97A8;
+
+  /* ── Sidebar ───────────────────────────────────────────────────── */
+  --color-sidebar:     #0075C9;
+
+  /* ── Type scale ────────────────────────────────────────────────── */
+  --text-xs:   0.75rem;
+  --text-sm:   0.875rem;
+  --text-base: 1rem;
+  --text-lg:   1.125rem;
+  --text-xl:   1.25rem;
+  --text-2xl:  1.5rem;
+  --text-3xl:  1.875rem;
+
+  /* ── Shadows ───────────────────────────────────────────────────── */
+  --shadow-card: 0 1px 3px rgba(0,0,0,0.06), 0 4px 12px rgba(0,0,0,0.04);
+  --shadow-card-hover: 0 2px 6px rgba(0,0,0,0.08), 0 8px 24px rgba(0,0,0,0.07);
+  --shadow-focus-primary: 0 0 0 3px rgba(0,117,201,0.18);
+}

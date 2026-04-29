@@ -1,17 +1,84 @@
 import { useState, useEffect, useRef } from 'react'
 import client from '../api/client'
 
-export default function Enrollment() {
-  const [students, setStudents]   = useState([])
-  const [name, setName]           = useState('')
-  const [studentId, setStudentId] = useState('')
-  const [created, setCreated]     = useState(null)
-  const [captures, setCaptures]   = useState([])
-  const [streaming, setStreaming] = useState(false)
-  const [enrollMsg, setEnrollMsg] = useState('')
-  const [loading, setLoading]     = useState(false)
+// ── Camera icon ───────────────────────────────────────────────────────────
 
-  const videoRef = useRef(null)
+const CameraIcon = () => (
+  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/>
+    <circle cx="12" cy="13" r="4"/>
+  </svg>
+)
+
+const UserIcon = () => (
+  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
+    <circle cx="12" cy="7" r="4"/>
+  </svg>
+)
+
+// ── Student list item ─────────────────────────────────────────────────────
+
+function StudentListItem({ student, selected, onClick }) {
+  const initial = student.name.charAt(0).toUpperCase()
+  return (
+    <button
+      onClick={onClick}
+      style={{
+        width: '100%',
+        textAlign: 'left',
+        display: 'flex',
+        alignItems: 'center',
+        gap: 12,
+        padding: '11px 14px',
+        border: 'none',
+        borderBottom: '1px solid var(--color-border)',
+        background: selected ? 'rgba(87,47,135,0.06)' : 'transparent',
+        cursor: 'pointer',
+        transition: 'background 0.12s ease',
+        outline: 'none',
+        borderLeft: selected ? '3px solid var(--color-purple)' : '3px solid transparent',
+      }}
+    >
+      <div style={{
+        width: 34, height: 34, borderRadius: '50%',
+        background: selected ? 'rgba(87,47,135,0.15)' : 'rgba(87,47,135,0.09)',
+        color: 'var(--color-purple)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        fontFamily: "'DM Sans', sans-serif",
+        fontWeight: 700, fontSize: 14,
+        flexShrink: 0,
+        transition: 'background 0.12s ease',
+      }}>
+        {initial}
+      </div>
+      <div style={{ minWidth: 0 }}>
+        <p style={{ fontWeight: 600, fontSize: 13, color: 'var(--color-text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+          {student.name}
+        </p>
+        <p style={{ fontSize: 11, color: 'var(--color-text-muted)', fontFamily: 'monospace', marginTop: 1 }}>
+          {student.student_id}
+        </p>
+      </div>
+    </button>
+  )
+}
+
+// ── Page ──────────────────────────────────────────────────────────────────
+
+export default function Enrollment() {
+  const [students,   setStudents]   = useState([])
+  const [name,       setName]       = useState('')
+  const [studentId,  setStudentId]  = useState('')
+  const [created,    setCreated]    = useState(null)
+  const [captures,   setCaptures]   = useState([])
+  const [streaming,  setStreaming]  = useState(false)
+  const [enrollMsg,  setEnrollMsg]  = useState('')
+  const [enrollOk,   setEnrollOk]   = useState(false)
+  const [loading,    setLoading]    = useState(false)
+  const [formError,  setFormError]  = useState('')
+
+  const videoRef  = useRef(null)
   const streamRef = useRef(null)
 
   useEffect(() => {
@@ -21,6 +88,7 @@ export default function Enrollment() {
 
   async function createStudent(e) {
     e.preventDefault()
+    setFormError('')
     setLoading(true)
     try {
       const r = await client.post('/students', { name, student_id: studentId })
@@ -30,8 +98,9 @@ export default function Enrollment() {
       setStudentId('')
       setCaptures([])
       setEnrollMsg('')
+      setEnrollOk(false)
     } catch (err) {
-      alert(err.response?.data?.detail ?? 'Failed to create student')
+      setFormError(err.response?.data?.detail ?? 'Failed to create student')
     } finally {
       setLoading(false)
     }
@@ -44,7 +113,8 @@ export default function Enrollment() {
       if (videoRef.current) videoRef.current.srcObject = s
       setStreaming(true)
     } catch (err) {
-      alert('Camera access denied: ' + err.message)
+      setEnrollMsg('Camera access denied: ' + err.message)
+      setEnrollOk(false)
     }
   }
 
@@ -78,154 +148,207 @@ export default function Enrollment() {
       const r = await client.post(`/students/${created.id}/enroll-face`, fd, {
         headers: { 'Content-Type': 'multipart/form-data' },
       })
-      setEnrollMsg(`Enrolled successfully (${r.data.frames_captured} frames)`)
+      setEnrollMsg(`Face enrolled — ${r.data.frames_captured} frames captured.`)
+      setEnrollOk(true)
       setCaptures([])
       stopCamera()
     } catch (err) {
       setEnrollMsg('Enrollment failed: ' + (err.response?.data?.detail ?? err.message))
+      setEnrollOk(false)
     } finally {
       setLoading(false)
     }
   }
 
   return (
-    <div className="p-6 space-y-5">
-      <h1 className="text-xl font-bold text-white">Enrollment</h1>
+    <div className="page-shell">
+      {/* Page header */}
+      <section className="page-header-card">
+        <div className="page-header-row">
+          <h1 className="section-title">Enrollment</h1>
+          <span className="status-chip-neutral">{students.length} students</span>
+        </div>
+      </section>
 
-      <div className="grid grid-cols-12 gap-5">
-        {/* Student list */}
-        <div className="col-span-4 bg-gray-900 rounded-xl border border-gray-800 overflow-hidden">
-          <div className="px-4 py-3 border-b border-gray-800">
-            <h2 className="text-sm font-semibold text-white">Students ({students.length})</h2>
+      <div style={{ display: 'grid', gridTemplateColumns: '260px 1fr', gap: 20, flex: 1, minHeight: 0 }}>
+
+        {/* ── Student list ────────────────────────────────────────── */}
+        <div className="table-shell" style={{ display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+          <div className="panel-header">
+            <h2 style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13, fontWeight: 700, color: 'var(--color-text-primary)' }}>
+              Students ({students.length})
+            </h2>
           </div>
-          <div className="overflow-y-auto max-h-[60vh]">
+          <div style={{ flex: 1, overflowY: 'auto' }}>
             {students.length === 0 ? (
-              <p className="text-center text-gray-600 text-sm py-8">No students yet</p>
+              <div className="empty-state">
+                <div className="empty-state-icon">
+                  <UserIcon />
+                </div>
+                <p className="empty-state-title">No students yet</p>
+                <p className="empty-state-desc">Create a student using the form to get started.</p>
+              </div>
             ) : (
-              <ul className="divide-y divide-gray-800">
-                {students.map(s => (
-                  <li key={s.id}
-                    onClick={() => { setCreated(s); setCaptures([]); setEnrollMsg('') }}
-                    className={`px-4 py-3 cursor-pointer hover:bg-gray-800/50 transition-colors ${
-                      created?.id === s.id ? 'bg-indigo-900/30 border-l-2 border-indigo-500' : ''
-                    }`}
-                  >
-                    <p className="text-sm text-white font-medium">{s.name}</p>
-                    <p className="text-xs text-gray-500 font-mono mt-0.5">{s.student_id}</p>
-                  </li>
-                ))}
-              </ul>
+              students.map(s => (
+                <StudentListItem
+                  key={s.id}
+                  student={s}
+                  selected={created?.id === s.id}
+                  onClick={() => { setCreated(s); setCaptures([]); setEnrollMsg(''); setEnrollOk(false) }}
+                />
+              ))
             )}
           </div>
         </div>
 
-        {/* Right panel */}
-        <div className="col-span-8 space-y-4">
+        {/* ── Right panel ─────────────────────────────────────────── */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+
           {/* Create student form */}
-          <div className="bg-gray-900 rounded-xl border border-gray-800 p-5">
-            <h2 className="text-sm font-semibold text-white mb-4">Create Student</h2>
-            <form onSubmit={createStudent} className="flex gap-3">
+          <div className="glass-card">
+            <h2 style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 15, fontWeight: 700, color: 'var(--color-text-primary)', marginBottom: 16 }}>
+              Add student
+            </h2>
+            <form onSubmit={createStudent} style={{ display: 'flex', gap: 10 }}>
               <input
-                placeholder="Full Name"
+                placeholder="Full name"
                 value={name}
                 onChange={e => setName(e.target.value)}
                 required
-                className="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-indigo-500"
+                className="field-control"
+                style={{ flex: 1 }}
               />
               <input
                 placeholder="Student ID"
                 value={studentId}
                 onChange={e => setStudentId(e.target.value)}
                 required
-                className="w-36 bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-indigo-500"
+                className="field-control"
+                style={{ width: 140 }}
               />
-              <button type="submit" disabled={loading}
-                className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-sm rounded-lg font-medium disabled:opacity-50">
-                Create
+              <button type="submit" disabled={loading} className="btn-primary" style={{ flexShrink: 0 }}>
+                {loading ? 'Creating…' : 'Create'}
               </button>
             </form>
+            {formError && (
+              <p style={{ marginTop: 10, fontSize: 13, color: 'var(--color-red)', background: 'rgba(236,0,68,0.06)', border: '1px solid rgba(236,0,68,0.18)', borderRadius: 8, padding: '8px 12px' }}>
+                {formError}
+              </p>
+            )}
           </div>
 
           {/* Face enrollment */}
-          {created && (
-            <div className="bg-gray-900 rounded-xl border border-gray-800 p-5 space-y-4">
-              <div className="flex items-center justify-between">
-                <h2 className="text-sm font-semibold text-white">
-                  Enroll Face — <span className="text-indigo-400">{created.name}</span>
+          {created ? (
+            <div className="glass-card" style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <h2 style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 15, fontWeight: 700, color: 'var(--color-text-primary)' }}>
+                  Face enrollment —{' '}
+                  <span style={{ color: 'var(--color-purple)' }}>{created.name}</span>
                 </h2>
-                <span className="text-xs text-gray-500">{captures.length}/5 frames</span>
+                <span className="status-chip-neutral" style={{ fontSize: 11 }}>{captures.length}/5 frames</span>
               </div>
 
               {/* Camera preview */}
-              <div className="relative bg-black rounded-xl overflow-hidden aspect-video max-w-md">
+              <div style={{
+                position: 'relative', borderRadius: 12, overflow: 'hidden',
+                aspectRatio: '16/9', maxWidth: 440,
+                border: '1px solid var(--color-border)',
+                background: 'rgba(26,34,51,0.96)',
+              }}>
                 <video
                   ref={videoRef}
-                  autoPlay
-                  muted
-                  playsInline
-                  className={`w-full h-full object-cover ${streaming ? '' : 'hidden'}`}
+                  autoPlay muted playsInline
+                  style={{ width: '100%', height: '100%', objectFit: 'cover', display: streaming ? 'block' : 'none' }}
                 />
                 {!streaming && (
-                  <div className="flex items-center justify-center h-full text-gray-600 text-sm">
-                    Camera off
+                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', gap: 8 }}>
+                    <div style={{ color: 'rgba(255,255,255,0.3)' }}>
+                      <CameraIcon />
+                    </div>
+                    <p style={{ fontSize: 13, color: 'rgba(255,255,255,0.35)' }}>Camera off</p>
                   </div>
                 )}
               </div>
 
               {/* Camera controls */}
-              <div className="flex gap-3">
+              <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
                 {!streaming ? (
-                  <button onClick={startCamera}
-                    className="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white text-sm rounded-lg">
-                    Start Camera
-                  </button>
+                  <button onClick={startCamera} className="btn-secondary">Start camera</button>
                 ) : (
                   <>
                     <button
                       onClick={captureFrame}
                       disabled={captures.length >= 5}
-                      className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-sm rounded-lg disabled:opacity-50"
+                      className="btn-primary"
                     >
-                      Capture
+                      Capture frame
                     </button>
-                    <button onClick={stopCamera}
-                      className="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white text-sm rounded-lg">
-                      Stop
-                    </button>
+                    <button onClick={stopCamera} className="btn-secondary">Stop</button>
                   </>
                 )}
                 {captures.length > 0 && (
                   <button
                     onClick={enrollFace}
                     disabled={loading}
-                    className="px-4 py-2 bg-green-700 hover:bg-green-600 text-white text-sm rounded-lg font-medium disabled:opacity-50 ml-auto"
+                    className="btn-success"
+                    style={{ marginLeft: 'auto' }}
                   >
-                    {loading ? 'Enrolling…' : `Enroll Face (${captures.length})`}
+                    {loading ? 'Enrolling…' : `Enroll face (${captures.length})`}
                   </button>
                 )}
               </div>
 
               {/* Capture thumbnails */}
               {captures.length > 0 && (
-                <div className="flex gap-2 flex-wrap">
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                   {captures.map((c, i) => (
-                    <div key={i} className="relative">
-                      <img src={c.url} alt={`frame ${i + 1}`}
-                        className="w-20 h-14 object-cover rounded-lg border border-gray-700" />
+                    <div key={i} style={{ position: 'relative' }}>
+                      <img
+                        src={c.url}
+                        alt={`Frame ${i + 1}`}
+                        style={{ width: 72, height: 52, objectFit: 'cover', borderRadius: 8, border: '1px solid var(--color-border)', display: 'block' }}
+                      />
                       <button
                         onClick={() => setCaptures(prev => prev.filter((_, j) => j !== i))}
-                        className="absolute -top-1 -right-1 w-5 h-5 bg-red-600 text-white text-xs rounded-full flex items-center justify-center"
-                      >×</button>
+                        style={{
+                          position: 'absolute', top: -6, right: -6,
+                          width: 20, height: 20, borderRadius: '50%',
+                          background: 'var(--color-red)', color: 'white',
+                          border: 'none', cursor: 'pointer',
+                          display: 'flex', alignItems: 'center', justifyContent: 'center',
+                          fontSize: 13, fontWeight: 700, lineHeight: 1,
+                          boxShadow: '0 1px 3px rgba(0,0,0,0.2)',
+                        }}
+                      >
+                        ×
+                      </button>
                     </div>
                   ))}
                 </div>
               )}
 
+              {/* Result message */}
               {enrollMsg && (
-                <p className={`text-sm ${enrollMsg.startsWith('Enrolled') ? 'text-green-400' : 'text-red-400'}`}>
+                <p style={{
+                  fontSize: 13, fontWeight: 600,
+                  color: enrollOk ? 'var(--color-forest)' : 'var(--color-red)',
+                  background: enrollOk ? 'rgba(134,192,87,0.1)' : 'rgba(236,0,68,0.07)',
+                  border: `1px solid ${enrollOk ? 'rgba(134,192,87,0.3)' : 'rgba(236,0,68,0.2)'}`,
+                  borderRadius: 8, padding: '10px 14px',
+                }}>
                   {enrollMsg}
                 </p>
               )}
+            </div>
+          ) : (
+            <div className="glass-card" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: 200, gap: 12, textAlign: 'center' }}>
+              <div style={{ width: 48, height: 48, borderRadius: 14, background: 'rgba(87,47,135,0.09)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--color-purple)' }}>
+                <CameraIcon />
+              </div>
+              <p style={{ fontSize: 14, fontWeight: 600, color: 'var(--color-text-secondary)' }}>Select a student</p>
+              <p style={{ fontSize: 13, color: 'var(--color-text-muted)', maxWidth: 280, lineHeight: 1.5 }}>
+                Choose a student from the list to enroll their face for recognition.
+              </p>
             </div>
           )}
         </div>

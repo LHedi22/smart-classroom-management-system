@@ -47,6 +47,16 @@ smart-classroom/
 └── docker-compose.yml
 ```
 
+## Seed Demo Data
+
+Populate the database with realistic demo data (35 students, 6 courses, 30 sessions, attendance records, alerts):
+
+```bash
+docker compose exec backend python seed.py
+```
+
+The script is idempotent — safe to run multiple times without duplicating data.
+
 ## Team
 
 Ben Jemaa · Jallouli · Saadaoui · Ouertani · Day — SMU MedTech Freshman ISS

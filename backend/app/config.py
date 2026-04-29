@@ -21,6 +21,12 @@ class Settings(BaseSettings):
     # Application
     secret_key: str = "changeme"
     room_id: str = "room1"
+    mock_mode: bool = False
+    face_recognition_enabled: bool = False
+
+    # Auth
+    access_token_expire_minutes: int = 480  # 8 hours
+    require_auth: bool = False  # set True in production to reject unauthenticated requests
 
     # Auto-control thresholds
     temp_ac_on_threshold: float = 28.0

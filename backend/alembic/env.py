@@ -24,6 +24,7 @@ from app.models.db_models import (  # noqa: E402
     AttendanceRecord,
     Course,
     FaceEncoding,
+    Professor,
     Session,
     SensorReading,
     Student,

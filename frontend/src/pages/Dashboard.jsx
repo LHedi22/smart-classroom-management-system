@@ -1,345 +1,518 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
+import {
+  LineChart, Line, ResponsiveContainer, Tooltip,
+} from 'recharts'
 import { useSensor } from '../context/SensorContext'
-import client from '../api/client'
+import DemoModeBanner from '../components/DemoModeBanner'
+import { getSessions, getSession } from '../api/sessions'
+import { getSessionSensorsLatest, getSessionSensorsSummary } from '../api/sensors'
 
-// ── helpers ───────────────────────────────────────────────────────────────
+// ── Constants ─────────────────────────────────────────────────────────────
 
-function timeAgo(iso) {
-  const diff = Math.floor((Date.now() - new Date(iso)) / 1000)
-  if (diff < 60) return `${diff}s ago`
-  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`
-  return `${Math.floor(diff / 3600)}h ago`
+const SENSOR_META = {
+  temperature: { label: 'Temperature', unit: '°C',   accent: 'border-red-500',    color: '#f87171' },
+  humidity:    { label: 'Humidity',    unit: '%',    accent: 'border-blue-500',   color: '#60a5fa' },
+  air_quality: { label: 'CO₂',        unit: ' ppm', accent: 'border-yellow-500', color: '#fbbf24' },
+  sound:       { label: 'Sound',      unit: '',     accent: 'border-purple-500', color: '#a78bfa' },
 }
 
-const STATUS_COLORS = {
-  present: 'bg-green-900 text-green-300',
-  absent:  'bg-gray-700 text-gray-300',
-  late:    'bg-yellow-900 text-yellow-300',
-  excused: 'bg-blue-900 text-blue-300',
+const STATUS_CHIP = {
+  present: 'bg-green-900/60 text-green-300 border border-green-800',
+  absent:  'bg-red-900/60 text-red-300 border border-red-800',
+  late:    'bg-yellow-900/60 text-yellow-300 border border-yellow-800',
+  excused: 'bg-blue-900/60 text-blue-300 border border-blue-800',
 }
 
-const ALERT_ICONS = {
-  temp_high:         '🌡',
-  temp_low:          '❄',
-  air_quality_high:  '💨',
-  attendance_anomaly:'⚠',
-  device_offline:    '📡',
+const DISPLAY_BADGE = {
+  live:     'bg-green-900/60 text-green-300 border border-green-800',
+  upcoming: 'bg-blue-900/60 text-blue-300 border border-blue-800',
+  done:     'bg-gray-700/60 text-gray-400 border border-gray-700',
 }
 
-// ── sub-components ────────────────────────────────────────────────────────
+const SPARK_MAX = 20
 
-function SensorCard({ label, main, sub, accent }) {
+// ── Helpers ───────────────────────────────────────────────────────────────
+
+function fmt(dt) {
+  if (!dt) return '—'
+  return new Date(dt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+}
+
+function fmtDate(dt) {
+  if (!dt) return '—'
+  return new Date(dt).toLocaleDateString([], { month: 'short', day: 'numeric' })
+}
+
+// ── Sub-components ────────────────────────────────────────────────────────
+
+function StatusBadge({ ds }) {
   return (
-    <div className={`bg-gray-800 rounded-xl p-4 border-l-4 ${accent}`}>
-      <p className="text-xs text-gray-400 uppercase tracking-widest mb-1">{label}</p>
-      <p className="text-3xl font-bold text-white">{main ?? '—'}</p>
-      <p className="text-xs text-gray-400 mt-1">{sub}</p>
+    <span className={`text-[10px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded-full ${DISPLAY_BADGE[ds] ?? DISPLAY_BADGE.done}`}>
+      {ds === 'live' ? '● Live' : ds === 'upcoming' ? 'Upcoming' : 'Done'}
+    </span>
+  )
+}
+
+function SessionCard({ session, selected, onClick }) {
+  return (
+    <button
+      onClick={onClick}
+      className={`w-full text-left px-4 py-3 rounded-xl border transition-all ${
+        selected
+          ? 'bg-indigo-900/40 border-indigo-600'
+          : 'bg-gray-800/50 border-gray-700 hover:border-gray-600 hover:bg-gray-800'
+      }`}
+    >
+      <div className="flex items-start justify-between gap-2 mb-1">
+        <p className="text-sm font-medium text-white leading-tight line-clamp-2">
+          {session.course_name || session.course?.name || '—'}
+        </p>
+        <StatusBadge ds={session.display_status} />
+      </div>
+      <p className="text-xs text-gray-400">{session.course_code || session.course?.code}</p>
+      <p className="text-xs text-gray-500 mt-1">
+        {fmtDate(session.started_at)} {fmt(session.started_at)}
+        {session.ended_at ? `–${fmt(session.ended_at)}` : ''}
+      </p>
+      {(session.present_count > 0 || session.total_students > 0) && (
+        <p className="text-xs text-gray-500 mt-0.5">
+          <span className="text-green-400">{session.present_count}</span>
+          /{session.total_students} present
+        </p>
+      )}
+    </button>
+  )
+}
+
+function SessionGroup({ title, sessions, selectedId, onSelect }) {
+  if (!sessions.length) return null
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center gap-2 px-1">
+        <p className="text-[10px] font-semibold uppercase tracking-widest text-gray-500">{title}</p>
+        <span className="text-[10px] bg-gray-700 text-gray-400 px-1.5 py-0.5 rounded-full font-medium">
+          {sessions.length}
+        </span>
+      </div>
+      {sessions.map(s => (
+        <SessionCard
+          key={s.id}
+          session={s}
+          selected={s.id === selectedId}
+          onClick={() => onSelect(s.id)}
+        />
+      ))}
     </div>
   )
 }
 
-function RelayToggle({ label, value, onChange }) {
-  const opts = ['on', 'off', 'auto']
+// ── Attendance Tab ────────────────────────────────────────────────────────
+
+function AttendanceTab({ sessionId, isLive }) {
+  const { attendance: wsAttendance } = useSensor()
+  const [detail,  setDetail]  = useState(null)
+  const [loading, setLoading] = useState(true)
+  const [error,   setError]   = useState(null)
+
+  useEffect(() => {
+    if (!sessionId) return
+    setLoading(true)
+    setError(null)
+    setDetail(null)
+    getSession(sessionId)
+      .then(d => setDetail(d))
+      .catch(() => setError('Failed to load attendance'))
+      .finally(() => setLoading(false))
+  }, [sessionId])
+
+  // Merge live WS attendance events for active sessions
+  useEffect(() => {
+    if (!isLive || !wsAttendance.length || !detail) return
+    setDetail(prev => {
+      if (!prev) return prev
+      const merged = [...prev.attendance]
+      wsAttendance.forEach(ev => {
+        if (!merged.some(r => r.student_id === ev.student_id)) {
+          merged.unshift({
+            student_id: ev.student_id,
+            name: ev.student_name ?? ev.student_id,
+            student_number: '',
+            status: ev.status ?? 'present',
+            detected_at: ev.detected_at,
+          })
+        }
+      })
+      return { ...prev, attendance: merged }
+    })
+  }, [wsAttendance, sessionId, isLive])
+
+  if (loading) return <div className="flex items-center justify-center h-40 text-gray-500 text-sm">Loading…</div>
+  if (error)   return <div className="flex items-center justify-center h-40 text-red-400 text-sm">{error}</div>
+
+  const records = detail?.attendance ?? []
+  const present = records.filter(r => r.status === 'present').length
+
+  if (records.length === 0) return (
+    <div className="flex flex-col items-center justify-center h-40 gap-2 text-gray-600">
+      <p className="text-2xl">📋</p>
+      <p className="text-sm">No attendance records yet</p>
+      {detail?.total_enrolled > 0 && (
+        <p className="text-xs text-gray-500">{detail.total_enrolled} students enrolled in this course</p>
+      )}
+    </div>
+  )
+
   return (
     <div>
-      <p className="text-xs text-gray-400 uppercase tracking-widest mb-2">{label}</p>
-      <div className="flex rounded-lg overflow-hidden border border-gray-700">
-        {opts.map(opt => (
+      <p className="text-xs text-gray-400 mb-3">
+        <span className="text-green-400 font-semibold">{present}</span> / {records.length} students recorded
+        {detail?.total_enrolled > 0 && (
+          <span className="text-gray-500"> ({detail.total_enrolled} enrolled)</span>
+        )}
+      </p>
+      <div className="overflow-auto max-h-[52vh]">
+        <table className="w-full text-sm">
+          <thead className="sticky top-0 bg-gray-900">
+            <tr className="text-xs text-gray-500 border-b border-gray-800">
+              <th className="text-left px-3 py-2 font-medium">Student</th>
+              <th className="text-left px-3 py-2 font-medium">ID</th>
+              <th className="text-left px-3 py-2 font-medium">Status</th>
+              <th className="text-left px-3 py-2 font-medium">Time</th>
+            </tr>
+          </thead>
+          <tbody>
+            {records.map((r, i) => (
+              <tr key={r.student_id + i} className="border-b border-gray-800/40 hover:bg-gray-800/30">
+                <td className="px-3 py-2.5 text-white font-medium">{r.name}</td>
+                <td className="px-3 py-2.5 text-gray-400 text-xs font-mono">{r.student_number || '—'}</td>
+                <td className="px-3 py-2.5">
+                  <span className={`text-[11px] px-2 py-0.5 rounded-full font-medium ${STATUS_CHIP[r.status] ?? STATUS_CHIP.absent}`}>
+                    {r.status}
+                  </span>
+                </td>
+                <td className="px-3 py-2.5 text-gray-400 text-xs">{fmt(r.detected_at)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  )
+}
+
+// ── Sensor metric card with sparkline ────────────────────────────────────
+
+function LiveSensorCard({ type, value, sparkData }) {
+  const meta = SENSOR_META[type]
+  const displayVal = type === 'sound'
+    ? (value != null ? (value > 0 ? 'Active' : 'Quiet') : '—')
+    : value != null ? `${Number(value).toFixed(1)}${meta.unit}` : '—'
+
+  return (
+    <div className={`bg-gray-800/60 rounded-xl p-4 border-l-4 ${meta.accent}`}>
+      <p className="text-[10px] uppercase tracking-widest text-gray-400 mb-1">{meta.label}</p>
+      <p className="text-2xl font-bold text-white mb-2">{displayVal}</p>
+      {sparkData && sparkData.length > 1 && type !== 'sound' && (
+        <div className="h-10">
+          <ResponsiveContainer width="100%" height="100%">
+            <LineChart data={sparkData}>
+              <Line
+                type="monotone"
+                dataKey="v"
+                stroke={meta.color}
+                strokeWidth={1.5}
+                dot={false}
+                isAnimationActive={false}
+              />
+              <Tooltip
+                contentStyle={{ background: '#1f2937', border: 'none', fontSize: 11 }}
+                formatter={v => [`${Number(v).toFixed(1)}${meta.unit}`, meta.label]}
+                labelFormatter={() => ''}
+              />
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function DoneSensorCard({ type, stats }) {
+  const meta = SENSOR_META[type]
+  if (!stats) return (
+    <div className="bg-gray-800/60 rounded-xl p-4 border-l-4 border-gray-700">
+      <p className="text-[10px] uppercase tracking-widest text-gray-400 mb-1">{meta.label}</p>
+      <p className="text-gray-600 text-sm">No data</p>
+    </div>
+  )
+  const fv = v => type !== 'sound' ? `${Number(v).toFixed(1)}${meta.unit}` : v
+  return (
+    <div className={`bg-gray-800/60 rounded-xl p-4 border-l-4 ${meta.accent}`}>
+      <p className="text-[10px] uppercase tracking-widest text-gray-400 mb-1">{meta.label}</p>
+      <p className="text-xl font-bold text-white">{fv(stats.avg)} avg</p>
+      <div className="flex gap-4 mt-1.5 text-xs text-gray-400">
+        <span>↓ {fv(stats.min)}</span>
+        <span>↑ {fv(stats.max)}</span>
+      </div>
+    </div>
+  )
+}
+
+// ── Sensors Tab ───────────────────────────────────────────────────────────
+
+function SensorsTab({ sessionId, displayStatus, sparkData }) {
+  const { sensors: wsSensors, isDemoMode } = useSensor()
+  const [summary,    setSummary]    = useState(null)
+  const [pollLatest, setPollLatest] = useState(null)
+  const [loading,    setLoading]    = useState(false)
+  const [error,      setError]      = useState(null)
+  const pollRef = useRef(null)
+
+  // Done session: fetch summary once; reset state on session change
+  useEffect(() => {
+    if (displayStatus !== 'done') return
+    setSummary(null)
+    setLoading(true)
+    setError(null)
+    getSessionSensorsSummary(sessionId)
+      .then(d => setSummary(d))
+      .catch(() => setError('No sensor data available for this session'))
+      .finally(() => setLoading(false))
+  }, [sessionId, displayStatus])
+
+  // Live session: poll latest every 5s as WS fallback; reset on session change
+  useEffect(() => {
+    clearInterval(pollRef.current)
+    if (displayStatus !== 'live') {
+      setPollLatest(null)
+      return
+    }
+    const poll = () => {
+      getSessionSensorsLatest(sessionId)
+        .then(d => setPollLatest(d.sensors ?? {}))
+        .catch(() => {})
+    }
+    poll()
+    pollRef.current = setInterval(poll, 5_000)
+    return () => clearInterval(pollRef.current)
+  }, [sessionId, displayStatus])
+
+  if (displayStatus === 'upcoming') return (
+    <div className="flex flex-col items-center justify-center h-48 gap-2">
+      <p className="text-3xl">📅</p>
+      <p className="text-gray-400 text-sm text-center">
+        Sensor data will appear once the session starts.
+      </p>
+    </div>
+  )
+
+  if (displayStatus === 'done') {
+    if (loading) return <div className="flex items-center justify-center h-40 text-gray-500 text-sm">Loading…</div>
+    if (error)   return (
+      <div className="flex flex-col items-center justify-center h-40 gap-2">
+        <p className="text-gray-500 text-sm">{error}</p>
+      </div>
+    )
+    return (
+      <div className="grid grid-cols-2 gap-3">
+        {Object.keys(SENSOR_META).map(type => (
+          <DoneSensorCard key={type} type={type} stats={summary?.[type]} />
+        ))}
+      </div>
+    )
+  }
+
+  // Live: prefer WS data; fall back to polled DB values
+  const src = isDemoMode ? pollLatest : wsSensors
+  return (
+    <div className="grid grid-cols-2 gap-3">
+      {Object.keys(SENSOR_META).map(type => {
+        const val = src?.[type]?.value ?? pollLatest?.[type]?.value ?? null
+        return (
+          <LiveSensorCard
+            key={type}
+            type={type}
+            value={val}
+            sparkData={sparkData[type] ?? []}
+          />
+        )
+      })}
+    </div>
+  )
+}
+
+// ── Detail Panel ──────────────────────────────────────────────────────────
+
+function DetailPanel({ session, sparkData }) {
+  const [tab, setTab] = useState('attendance')
+
+  useEffect(() => setTab('attendance'), [session?.id])
+
+  if (!session) return (
+    <div className="flex flex-col items-center justify-center h-full gap-3 text-gray-600">
+      <p className="text-4xl">←</p>
+      <p className="text-sm">Select a session from the left to view details</p>
+    </div>
+  )
+
+  return (
+    <div className="flex flex-col h-full">
+      {/* Session header */}
+      <div className="px-5 py-4 border-b border-gray-800 shrink-0">
+        <div className="flex items-center gap-2.5 mb-0.5">
+          <p className="text-base font-semibold text-white">
+            {session.course_name || session.course?.name}
+          </p>
+          <StatusBadge ds={session.display_status} />
+        </div>
+        <p className="text-xs text-gray-500">
+          {session.course_code || session.course?.code} · Room {session.room_id} ·{' '}
+          {fmtDate(session.started_at)} {fmt(session.started_at)}
+          {session.ended_at ? `–${fmt(session.ended_at)}` : ''}
+        </p>
+      </div>
+
+      {/* Tabs */}
+      <div className="flex border-b border-gray-800 shrink-0">
+        {['attendance', 'sensors'].map(t => (
           <button
-            key={opt}
-            onClick={() => onChange(opt)}
-            className={`flex-1 py-1.5 text-xs font-medium capitalize transition-colors ${
-              value === opt
-                ? 'bg-indigo-600 text-white'
-                : 'bg-gray-800 text-gray-400 hover:bg-gray-700'
+            key={t}
+            onClick={() => setTab(t)}
+            className={`px-5 py-3 text-sm font-medium capitalize transition-colors ${
+              tab === t
+                ? 'text-white border-b-2 border-indigo-500'
+                : 'text-gray-500 hover:text-gray-300'
             }`}
           >
-            {opt}
+            {t}
           </button>
         ))}
       </div>
-    </div>
-  )
-}
 
-// ── Start Session Modal ───────────────────────────────────────────────────
-
-function StartSessionModal({ courses, onStart, onClose }) {
-  const [courseId, setCourseId] = useState(courses[0]?.id ?? '')
-  const [roomId, setRoomId]     = useState('room1')
-  const [loading, setLoading]   = useState(false)
-
-  async function submit(e) {
-    e.preventDefault()
-    if (!courseId) return
-    setLoading(true)
-    try { await onStart(courseId, roomId) } finally { setLoading(false) }
-  }
-
-  return (
-    <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
-      <div className="bg-gray-900 rounded-2xl p-6 w-96 border border-gray-700 shadow-2xl">
-        <h3 className="text-lg font-semibold text-white mb-4">Start Session</h3>
-        <form onSubmit={submit} className="space-y-4">
-          <div>
-            <label className="block text-xs text-gray-400 mb-1">Course</label>
-            <select
-              value={courseId}
-              onChange={e => setCourseId(e.target.value)}
-              className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500"
-            >
-              {courses.map(c => (
-                <option key={c.id} value={c.id}>{c.code} — {c.name}</option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <label className="block text-xs text-gray-400 mb-1">Room ID</label>
-            <input
-              value={roomId}
-              onChange={e => setRoomId(e.target.value)}
-              className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500"
+      {/* Tab content */}
+      <div className="flex-1 overflow-auto px-5 py-4">
+        {tab === 'attendance'
+          ? (
+            <AttendanceTab
+              key={session.id}
+              sessionId={session.id}
+              isLive={session.display_status === 'live'}
             />
-          </div>
-          <div className="flex gap-3 pt-2">
-            <button type="button" onClick={onClose}
-              className="flex-1 py-2 rounded-lg border border-gray-700 text-sm text-gray-400 hover:bg-gray-800">
-              Cancel
-            </button>
-            <button type="submit" disabled={loading || !courseId}
-              className="flex-1 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-sm text-white font-medium disabled:opacity-50">
-              {loading ? 'Starting…' : 'Start'}
-            </button>
-          </div>
-        </form>
+          )
+          : (
+            <SensorsTab
+              key={session.id}
+              sessionId={session.id}
+              displayStatus={session.display_status}
+              sparkData={sparkData}
+            />
+          )
+        }
       </div>
     </div>
   )
 }
 
-// ── Page ─────────────────────────────────────────────────────────────────
+// ── Page ──────────────────────────────────────────────────────────────────
 
 export default function Dashboard() {
-  const { sensors, attendance, alerts, relayStatus, isConnected } = useSensor()
+  const { sensors: wsSensors, isDemoMode, isConnected } = useSensor()
 
-  const [courses, setCourses]           = useState([])
-  const [activeSession, setActiveSession] = useState(null)
-  const [showModal, setShowModal]       = useState(false)
-  const [relay, setRelay]               = useState({ ac: 'auto', lighting: 'auto' })
+  const [sessions,    setSessions]    = useState([])
+  const [selectedId,  setSelectedId]  = useState(null)
+  const [loadingSess, setLoadingSess] = useState(true)
+  const [sessError,   setSessError]   = useState(null)
 
+  // Sparkline rolling history (ref for accumulation, state for renders)
+  const sparkRef      = useRef({ temperature: [], humidity: [], air_quality: [], sound: [] })
+  const [sparkData,   setSparkData]   = useState(sparkRef.current)
+  const lastPushedRef = useRef({})
+
+  // Load session list and auto-select
   useEffect(() => {
-    client.get('/courses').then(r => setCourses(r.data)).catch(() => {})
-    client.get('/sessions?status=active').then(r => {
-      if (r.data.length > 0) setActiveSession(r.data[0])
-    }).catch(() => {})
+    setLoadingSess(true)
+    getSessions()
+      .then(data => {
+        setSessions(data)
+        // Auto-select: first live → first upcoming → none
+        const live     = data.find(s => s.display_status === 'live')
+        const upcoming = data.find(s => s.display_status === 'upcoming')
+        const pick     = live ?? upcoming ?? null
+        if (pick) setSelectedId(pick.id)
+      })
+      .catch(() => setSessError('Could not load sessions'))
+      .finally(() => setLoadingSess(false))
   }, [])
 
-  // Sync relay display from WebSocket snapshot
-  useEffect(() => { setRelay(relayStatus) }, [relayStatus])
+  // Accumulate WS sensor data into sparkline history
+  useEffect(() => {
+    const selected = sessions.find(s => s.id === selectedId)
+    if (!selected || selected.display_status !== 'live') return
+    let changed = false
+    const next = { ...sparkRef.current }
+    Object.entries(wsSensors).forEach(([type, data]) => {
+      if (data?.value != null && data.value !== lastPushedRef.current[type]) {
+        lastPushedRef.current[type] = data.value
+        next[type] = [...(next[type] ?? []), { v: data.value }].slice(-SPARK_MAX)
+        changed = true
+      }
+    })
+    if (changed) {
+      sparkRef.current = next
+      setSparkData({ ...next })
+    }
+  }, [wsSensors, selectedId, sessions])
 
-  async function sendRelay(device, action) {
-    setRelay(prev => ({ ...prev, [device]: action }))
-    await client.post(`/control/${device}`, { room_id: activeSession?.room_id ?? 'room1', action })
-  }
+  const selectedSession = sessions.find(s => s.id === selectedId) ?? null
 
-  async function startSession(courseId, roomId) {
-    const r = await client.post('/sessions/start', { course_id: courseId, room_id: roomId })
-    setActiveSession(r.data)
-    setShowModal(false)
-  }
-
-  async function endSession() {
-    if (!activeSession) return
-    await client.post(`/sessions/${activeSession.id}/end`)
-    setActiveSession(null)
-  }
-
-  // Derived sensor values
-  const temp = sensors.temperature?.value
-  const hum  = sensors.humidity?.value
-  const aq   = sensors.air_quality?.value
-  const snd  = sensors.sound?.value
-
-  const tempAccent = temp == null ? 'border-gray-700'
-    : temp > 28 ? 'border-red-500'
-    : temp < 22 ? 'border-blue-500'
-    : 'border-green-500'
-
-  const aqLabel = aq == null ? '—'
-    : aq > 500 ? 'Poor'
-    : aq > 300 ? 'Moderate'
-    : 'Good'
-
-  const aqAccent = aq == null ? 'border-gray-700'
-    : aq > 500 ? 'border-red-500'
-    : aq > 300 ? 'border-yellow-500'
-    : 'border-green-500'
+  const live     = sessions.filter(s => s.display_status === 'live')
+  const upcoming = sessions.filter(s => s.display_status === 'upcoming')
+  const done     = sessions.filter(s => s.display_status === 'done')
 
   return (
-    <div className="p-6 space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-xl font-bold text-white">Dashboard</h1>
-          <p className="text-xs text-gray-500 mt-0.5">
-            {isConnected ? 'Live data' : 'Offline — reconnecting…'}
+    <div className="flex h-screen overflow-hidden">
+      {/* ── Left panel: session list ─────────────────────────────────── */}
+      <div className="w-72 shrink-0 border-r border-gray-800 flex flex-col overflow-hidden">
+
+        <div className="px-4 py-4 border-b border-gray-800 shrink-0">
+          <div className="flex items-center justify-between">
+            <h1 className="text-sm font-bold text-white">Sessions</h1>
+            {sessions.length > 0 && (
+              <span className="text-[10px] bg-gray-700 text-gray-400 px-2 py-0.5 rounded-full">
+                {sessions.length} total
+              </span>
+            )}
+          </div>
+          <p className="text-[10px] text-gray-500 mt-0.5">
+            {isConnected
+              ? <span className="text-green-500">● Connected</span>
+              : <span className="text-gray-600">○ Offline</span>}
           </p>
         </div>
-        <div className="flex items-center gap-3">
-          {activeSession ? (
-            <>
-              <span className="text-xs bg-green-900 text-green-300 px-3 py-1.5 rounded-full font-medium">
-                Session active
-              </span>
-              <button onClick={endSession}
-                className="px-4 py-1.5 bg-red-600 hover:bg-red-500 text-white text-sm rounded-lg font-medium">
-                End Session
-              </button>
-            </>
+
+        <DemoModeBanner isDemoMode={isDemoMode} />
+
+        <div className="flex-1 overflow-y-auto px-3 py-3 space-y-5">
+          {loadingSess ? (
+            <p className="text-gray-500 text-xs text-center pt-6">Loading sessions…</p>
+          ) : sessError ? (
+            <p className="text-red-400 text-xs text-center pt-6">{sessError}</p>
+          ) : sessions.length === 0 ? (
+            <p className="text-gray-600 text-xs text-center pt-6">No sessions found</p>
           ) : (
-            <button onClick={() => setShowModal(true)}
-              className="px-4 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white text-sm rounded-lg font-medium">
-              + Start Session
-            </button>
+            <>
+              <SessionGroup title="Live now"  sessions={live}     selectedId={selectedId} onSelect={setSelectedId} />
+              <SessionGroup title="Upcoming"  sessions={upcoming} selectedId={selectedId} onSelect={setSelectedId} />
+              <SessionGroup title="Past"      sessions={done}     selectedId={selectedId} onSelect={setSelectedId} />
+            </>
           )}
         </div>
       </div>
 
-      {/* Active session banner */}
-      {activeSession && (
-        <div className="bg-indigo-900/40 border border-indigo-700 rounded-xl px-4 py-3 text-sm text-indigo-200">
-          Active: <span className="font-medium">{activeSession.course?.name ?? activeSession.course_id}</span>
-          {' '}— Room <span className="font-medium">{activeSession.room_id}</span>
-          <span className="text-indigo-400 ml-3 text-xs">
-            Started {timeAgo(activeSession.started_at)}
-          </span>
-        </div>
-      )}
-
-      <div className="grid grid-cols-12 gap-5">
-        {/* ── Left: Sensor cards ─────────────────────────────────────── */}
-        <div className="col-span-3 space-y-4">
-          <SensorCard
-            label="Temperature"
-            main={temp != null ? `${temp.toFixed(1)}°C` : null}
-            sub={temp == null ? 'No data' : temp > 28 ? 'High — AC recommended' : temp < 22 ? 'Low' : 'Comfortable'}
-            accent={tempAccent}
-          />
-          <SensorCard
-            label="Humidity"
-            main={hum != null ? `${hum.toFixed(0)}%` : null}
-            sub={hum == null ? 'No data' : hum > 70 ? 'High' : hum < 30 ? 'Low' : 'Normal'}
-            accent="border-blue-500"
-          />
-          <SensorCard
-            label="Air Quality"
-            main={aq != null ? `${aq.toFixed(0)} ppm` : null}
-            sub={aqLabel}
-            accent={aqAccent}
-          />
-          <SensorCard
-            label="Sound"
-            main={snd != null ? (snd > 0 ? 'Active' : 'Quiet') : null}
-            sub={snd != null ? (snd > 0 ? 'Activity detected' : 'No noise') : 'No data'}
-            accent={snd > 0 ? 'border-yellow-500' : 'border-gray-700'}
-          />
-        </div>
-
-        {/* ── Center: Attendance ─────────────────────────────────────── */}
-        <div className="col-span-6">
-          <div className="bg-gray-900 rounded-xl border border-gray-800 overflow-hidden h-full">
-            <div className="px-4 py-3 border-b border-gray-800 flex items-center justify-between">
-              <h2 className="text-sm font-semibold text-white">Live Attendance</h2>
-              <span className="text-xs text-gray-500">{attendance.length} recognized</span>
-            </div>
-            {attendance.length === 0 ? (
-              <div className="flex items-center justify-center h-48 text-gray-600 text-sm">
-                No attendance events yet
-              </div>
-            ) : (
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="text-xs text-gray-500 border-b border-gray-800">
-                    <th className="text-left px-4 py-2 font-medium">Student</th>
-                    <th className="text-left px-4 py-2 font-medium">Status</th>
-                    <th className="text-left px-4 py-2 font-medium">Confidence</th>
-                    <th className="text-left px-4 py-2 font-medium">Detected</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {attendance.map((rec, i) => (
-                    <tr key={i} className="border-b border-gray-800/50 hover:bg-gray-800/30">
-                      <td className="px-4 py-2.5 text-white font-medium">
-                        {rec.student_name ?? rec.student_id}
-                      </td>
-                      <td className="px-4 py-2.5">
-                        <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${STATUS_COLORS[rec.status] ?? STATUS_COLORS.present}`}>
-                          {rec.status}
-                        </span>
-                      </td>
-                      <td className="px-4 py-2.5 text-gray-400 text-xs">
-                        {rec.confidence != null ? `${(rec.confidence * 100).toFixed(0)}%` : '—'}
-                      </td>
-                      <td className="px-4 py-2.5 text-gray-400 text-xs">
-                        {timeAgo(rec.detected_at)}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
-          </div>
-        </div>
-
-        {/* ── Right: Controls + Alerts ───────────────────────────────── */}
-        <div className="col-span-3 space-y-4">
-          {/* Relay controls */}
-          <div className="bg-gray-900 rounded-xl border border-gray-800 p-4 space-y-4">
-            <h2 className="text-sm font-semibold text-white">Controls</h2>
-            <RelayToggle label="AC" value={relay.ac}
-              onChange={v => sendRelay('ac', v)} />
-            <RelayToggle label="Lighting" value={relay.lighting}
-              onChange={v => sendRelay('lighting', v)} />
-          </div>
-
-          {/* Alert feed */}
-          <div className="bg-gray-900 rounded-xl border border-gray-800 overflow-hidden">
-            <div className="px-4 py-3 border-b border-gray-800 flex items-center justify-between">
-              <h2 className="text-sm font-semibold text-white">Recent Alerts</h2>
-              {alerts.length > 0 && (
-                <span className="text-xs bg-red-900 text-red-300 px-2 py-0.5 rounded-full">
-                  {alerts.length}
-                </span>
-              )}
-            </div>
-            {alerts.length === 0 ? (
-              <p className="text-gray-600 text-xs text-center py-6">No alerts</p>
-            ) : (
-              <div className="divide-y divide-gray-800">
-                {alerts.slice(0, 5).map((a, i) => (
-                  <div key={i} className="px-4 py-2.5 flex gap-2">
-                    <span className="text-base leading-none shrink-0">
-                      {ALERT_ICONS[a.alert_type] ?? '⚠'}
-                    </span>
-                    <div className="min-w-0">
-                      <p className="text-xs text-gray-200 leading-tight line-clamp-2">{a.message}</p>
-                      <p className="text-[10px] text-gray-500 mt-0.5">{timeAgo(a.created_at)}</p>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
+      {/* ── Right panel: detail ──────────────────────────────────────── */}
+      <div className="flex-1 bg-gray-900/40 overflow-hidden">
+        <DetailPanel session={selectedSession} sparkData={sparkData} />
       </div>
-
-      {showModal && (
-        <StartSessionModal
-          courses={courses}
-          onStart={startSession}
-          onClose={() => setShowModal(false)}
-        />
-      )}
     </div>
   )
 }

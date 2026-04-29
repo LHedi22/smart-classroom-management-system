@@ -22,9 +22,15 @@ from app.database import Base
 
 # ── Enums ──────────────────────────────────────────────────────────────────
 
+class ProfessorRole(str, enum.Enum):
+    professor = "professor"
+    admin = "admin"
+
+
 class SessionStatus(str, enum.Enum):
     active = "active"
     ended = "ended"
+    upcoming = "upcoming"  # pre-scheduled, not yet started
 
 
 class AttendanceStatus(str, enum.Enum):
@@ -47,6 +53,29 @@ class AlertType(str, enum.Enum):
     air_quality_high = "air_quality_high"
     attendance_anomaly = "attendance_anomaly"
     device_offline = "device_offline"
+
+
+# ── Professor ─────────────────────────────────────────────────────────────
+
+class Professor(Base):
+    __tablename__ = "professors"
+
+    id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, server_default=text("gen_random_uuid()")
+    )
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    email: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
+    hashed_password: Mapped[str] = mapped_column(String(255), nullable=False)
+    role: Mapped[ProfessorRole] = mapped_column(
+        Enum(ProfessorRole, name="professor_role"),
+        nullable=False,
+        default=ProfessorRole.professor,
+    )
+    created_at: Mapped[DateTime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    courses: Mapped[list["Course"]] = relationship("Course", back_populates="professor")
 
 
 # ── Association table: many-to-many Course ↔ Student ──────────────────────
@@ -94,7 +123,12 @@ class Course(Base):
     code: Mapped[str] = mapped_column(String(50), unique=True, nullable=False)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     professor_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    # FK to professors table — nullable so pre-auth seeded data is unaffected
+    professor_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("professors.id", ondelete="SET NULL"), nullable=True
+    )
 
+    professor: Mapped["Professor | None"] = relationship("Professor", back_populates="courses")
     sessions: Mapped[list["Session"]] = relationship(back_populates="course")
     students: Mapped[list["Student"]] = relationship(
         secondary=course_students, back_populates="courses"

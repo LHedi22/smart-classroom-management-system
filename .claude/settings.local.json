@@ -39,7 +39,29 @@
       "Bash(curl -s -o /dev/null -w \"docs STATUS:%{http_code}\" \"http://localhost:8001/docs\")",
       "Bash(cmd /c \"taskkill /F /PID 30256\")",
       "Bash(pip show *)",
-      "Bash(npm run *)"
+      "Bash(npm run *)",
+      "Bash(git -C /c/Hedi/MedTech/Freshman/ISS/smart-classroom-management status --short)",
+      "Bash(git config *)",
+      "Bash(curl -s --max-time 3 http://localhost:8000/health)",
+      "Bash(curl -s --max-time 5 http://localhost:8000/health)",
+      "Bash(curl -s --max-time 3 http://localhost:8000/)",
+      "Bash(curl -s --max-time 3 http://localhost:8000/api/courses)",
+      "Bash(curl -s --max-time 3 http://localhost:8000/api/sessions)",
+      "Bash(curl -s --max-time 3 http://localhost:8000/docs)",
+      "Bash(powershell.exe -Command \"Get-Process -Id 4892 | Select-Object -Property Name, Id, Path\")",
+      "Bash(curl -s --max-time 3 http://localhost:8000/openapi.json)",
+      "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); [print\\(p\\) for p in d.get\\('paths',{}\\).keys\\(\\)]\")",
+      "Bash(powershell.exe *)",
+      "Bash(docker compose *)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:3000/)",
+      "Bash(docker info *)",
+      "Bash(tasklist)",
+      "Bash(docker version *)",
+      "Bash(wsl *)",
+      "Bash(curl -s -X POST http://localhost:8000/api/auth/login -d 'username=s.trabelsi@smu.tn&password=prof123' -H 'Content-Type: application/x-www-form-urlencoded')",
+      "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); [print\\(f\\\\\"  {k}: avg={v['avg']} min={v['min']} max={v['max']}\\\\\"\\) for k,v in d.items\\(\\) if k!='session_id']\")",
+      "Bash(curl -s -X POST http://localhost:8000/api/auth/login -d 'username=admin@smu.tn&password=admin123' -H 'Content-Type: application/x-www-form-urlencoded')",
+      "Bash(python3 -c ' *)"
     ]
   }
 }

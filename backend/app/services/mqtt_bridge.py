@@ -123,18 +123,17 @@ async def _bridge_loop() -> None:
                 await client.subscribe("classroom/+/sensors/#")
                 await client.subscribe("classroom/+/status")
 
-                async with client.messages as messages:
-                    async for message in messages:
-                        if _stop_event.is_set():
-                            break
+                async for message in client.messages:
+                    if _stop_event.is_set():
+                        break
 
-                        topic = str(message.topic)
-                        payload = message.payload.decode("utf-8", errors="replace")
+                    topic = str(message.topic)
+                    payload = message.payload.decode("utf-8", errors="replace")
 
-                        if "/sensors/" in topic:
-                            await _handle_sensor(topic, payload)
-                        elif topic.endswith("/status"):
-                            await _handle_status(topic, payload)
+                    if "/sensors/" in topic:
+                        await _handle_sensor(topic, payload)
+                    elif topic.endswith("/status"):
+                        await _handle_status(topic, payload)
 
         except mqtt.MqttError as exc:
             if _stop_event.is_set():

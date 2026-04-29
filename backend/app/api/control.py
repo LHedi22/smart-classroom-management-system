@@ -3,8 +3,10 @@ import json
 import logging
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
+from app.api.deps import require_admin
+from app.models.db_models import Professor
 from app.models.schemas import ControlStatusResponse, RelayCommand, RelayCommandResponse
 from app.redis_client import get_relay_state, get_redis_pool, get_sensor_latest, is_device_online, set_relay_state
 
@@ -29,7 +31,7 @@ def _now_utc() -> datetime:
 # ── POST /api/control/ac ──────────────────────────────────────────────────
 
 @router.post("/ac", response_model=RelayCommandResponse)
-async def control_ac(body: RelayCommand) -> RelayCommandResponse:
+async def control_ac(body: RelayCommand, _: Professor = Depends(require_admin)) -> RelayCommandResponse:
     await set_relay_state(body.room_id, "ac", body.action)
     asyncio.create_task(_send_relay_command(body.room_id, "ac", body.action))
     return RelayCommandResponse(
@@ -43,7 +45,7 @@ async def control_ac(body: RelayCommand) -> RelayCommandResponse:
 # ── POST /api/control/lighting ────────────────────────────────────────────
 
 @router.post("/lighting", response_model=RelayCommandResponse)
-async def control_lighting(body: RelayCommand) -> RelayCommandResponse:
+async def control_lighting(body: RelayCommand, _: Professor = Depends(require_admin)) -> RelayCommandResponse:
     await set_relay_state(body.room_id, "lighting", body.action)
     asyncio.create_task(_send_relay_command(body.room_id, "lighting", body.action))
     return RelayCommandResponse(

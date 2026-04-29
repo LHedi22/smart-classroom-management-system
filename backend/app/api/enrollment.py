@@ -1,33 +1,17 @@
-import io
 import logging
 from typing import Annotated
 
-import numpy as np
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.deps import require_admin
 from app.database import get_db
-from app.models.db_models import FaceEncoding, Student
+from app.models.db_models import FaceEncoding, Professor, Student
 from app.models.schemas import EnrollFaceResponse, StudentCreate, StudentResponse
 from app.services.face_recognition_service import face_recognition_service
 
 logger = logging.getLogger(__name__)
-
-# Optional imports — face_recognition may not be available outside RPi
-try:
-    import face_recognition as fr  # type: ignore[import]
-    _FR_AVAILABLE = True
-except ImportError:
-    fr = None  # type: ignore[assignment]
-    _FR_AVAILABLE = False
-
-try:
-    import cv2  # type: ignore[import]
-    _CV2_AVAILABLE = True
-except ImportError:
-    cv2 = None  # type: ignore[assignment]
-    _CV2_AVAILABLE = False
 
 router = APIRouter()
 
@@ -38,6 +22,7 @@ router = APIRouter()
 async def create_student(
     body: StudentCreate,
     db: Annotated[AsyncSession, Depends(get_db)],
+    _: Professor = Depends(require_admin),
 ) -> StudentResponse:
     existing = (
         await db.execute(select(Student).where(Student.student_id == body.student_id))
@@ -48,7 +33,7 @@ async def create_student(
 
     student = Student(name=body.name, student_id=body.student_id)
     db.add(student)
-    await db.flush()  # get the server-generated UUID before commit
+    await db.flush()
     await db.refresh(student)
     await db.commit()
     return StudentResponse.model_validate(student)
@@ -81,6 +66,23 @@ async def get_student(
     return StudentResponse.model_validate(student)
 
 
+# ── DELETE /api/students/{id} ────────────────────────────────────────────
+
+@router.delete("/students/{student_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_student(
+    student_id: str,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    _: Professor = Depends(require_admin),
+) -> None:
+    student = (
+        await db.execute(select(Student).where(Student.id == student_id))
+    ).scalar_one_or_none()
+    if not student:
+        raise HTTPException(status_code=404, detail="Student not found")
+    await db.delete(student)
+    await db.commit()
+
+
 # ── POST /api/students/{id}/enroll-face ──────────────────────────────────
 
 @router.post("/students/{student_id}/enroll-face", response_model=EnrollFaceResponse)
@@ -89,7 +91,6 @@ async def enroll_face(
     db: Annotated[AsyncSession, Depends(get_db)],
     images: list[UploadFile] = File(..., description="Up to 5 face images"),
 ) -> EnrollFaceResponse:
-    # Verify student exists
     student = (
         await db.execute(select(Student).where(Student.id == student_id))
     ).scalar_one_or_none()
@@ -99,53 +100,38 @@ async def enroll_face(
     if len(images) > 5:
         raise HTTPException(status_code=422, detail="Maximum 5 images allowed")
 
-    if not _FR_AVAILABLE or not _CV2_AVAILABLE:
-        raise HTTPException(
-            status_code=503,
-            detail="face_recognition library not available on this server",
-        )
+    images_bytes = [await img.read() for img in images]
 
-    encodings: list[np.ndarray] = []
+    result = await face_recognition_service.enroll_student_face(student_id, images_bytes)
 
-    for upload in images:
-        raw = await upload.read()
-        # Decode bytes → numpy BGR frame
-        arr = np.frombuffer(raw, dtype=np.uint8)
-        frame = cv2.imdecode(arr, cv2.IMREAD_COLOR)
-        if frame is None:
-            logger.warning("Could not decode image %s — skipping", upload.filename)
-            continue
-
-        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        face_encs = fr.face_encodings(rgb)
-        if not face_encs:
-            logger.warning("No face detected in %s — skipping", upload.filename)
-            continue
-
-        encodings.append(face_encs[0])  # take the first (largest) face
-
-    if not encodings:
+    if result["encoding"] is None:
         raise HTTPException(status_code=422, detail="No valid face detected in any uploaded image")
 
-    # Average all encodings into one representative vector
-    mean_encoding: np.ndarray = np.mean(encodings, axis=0)
-
-    # Delete any existing encoding for this student (re-enrollment)
     existing_enc = (
         await db.execute(select(FaceEncoding).where(FaceEncoding.student_id == student_id))
     ).scalar_one_or_none()
     if existing_enc:
         await db.delete(existing_enc)
 
-    db.add(FaceEncoding(student_id=student_id, encoding=mean_encoding.tobytes()))
+    db.add(FaceEncoding(student_id=student_id, encoding=result["encoding"].tobytes()))
     await db.commit()
 
-    # Refresh the in-memory recognition service
     await face_recognition_service.reload_encodings()
 
-    logger.info("Enrolled face for student %s (%d images used)", student_id, len(encodings))
+    frames = result["frames_used"]
+    mode = result["mode"]
+
+    if mode == "stub":
+        logger.info("Enrolled stub face for student %s (placeholder encoding)", student_id)
+        return EnrollFaceResponse(
+            student_id=student_id,
+            frames_captured=0,
+            message="Face enrollment stub: placeholder encoding stored (FACE_RECOGNITION_ENABLED=false)",
+        )
+
+    logger.info("Enrolled face for student %s (%d images used)", student_id, frames)
     return EnrollFaceResponse(
         student_id=student_id,
-        frames_captured=len(encodings),
-        message=f"Successfully enrolled {len(encodings)} face image(s)",
+        frames_captured=frames,
+        message=f"Successfully enrolled {frames} face image(s)",
     )

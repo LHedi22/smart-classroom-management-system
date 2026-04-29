@@ -3,21 +3,27 @@ Background recognition loop.
 
 Runs at 2 fps while a session is active. Detects faces, records attendance,
 and flags occupancy anomalies.
+
+When FACE_RECOGNITION_ENABLED=false (stub mode), a lightweight async loop
+emits a synthetic attendance event every 45 seconds for a randomly chosen
+enrolled student so the WebSocket and frontend need no changes.
 """
 import asyncio
 import logging
+import random
 import time
 
 from app.database import AsyncSessionLocal
 from app.models.db_models import AttendanceRecord, AttendanceStatus
 from app.services.event_queues import attendance_event_queue
-from app.services.face_recognition_service import face_recognition_service
+from app.services.face_recognition_service import _FR_AVAILABLE, face_recognition_service
 
 logger = logging.getLogger(__name__)
 
 COOLDOWN_SECONDS = 30
 FRAME_INTERVAL = 0.5  # 2 fps
 ANOMALY_THRESHOLD = 2  # alert if HOG count > face count + this value
+STUB_INTERVAL = 45  # seconds between synthetic attendance events in stub mode
 
 _loop_task: asyncio.Task | None = None
 _stop_event = asyncio.Event()
@@ -30,7 +36,6 @@ _current_room_id: str | None = None
 # ─────────────────────────────────────────────────────────────────────────
 
 async def _record_attendance(session_id: str, student_id: str) -> None:
-    from app.models.db_models import Student
     async with AsyncSessionLocal() as db:
         record = AttendanceRecord(
             session_id=session_id,
@@ -47,11 +52,65 @@ def _log_task_exc(task: asyncio.Task) -> None:
 
 
 # ─────────────────────────────────────────────────────────────────────────
-# Core loop
+# Stub loop (FACE_RECOGNITION_ENABLED=false)
+# ─────────────────────────────────────────────────────────────────────────
+
+async def _stub_recognition_loop(session_id: str, room_id: str) -> None:
+    """Emit a synthetic attendance event every STUB_INTERVAL seconds."""
+    from sqlalchemy import select
+
+    from app.models.db_models import Session as SessionModel, Student, course_students
+
+    logger.info("[FACE_STUB] Stub recognition loop started for session %s", session_id)
+
+    while not _stop_event.is_set():
+        await asyncio.sleep(STUB_INTERVAL)
+        if _stop_event.is_set():
+            break
+
+        try:
+            async with AsyncSessionLocal() as db:
+                session = await db.get(SessionModel, session_id)
+                if session is None:
+                    break
+
+                students = (
+                    await db.execute(
+                        select(Student)
+                        .join(course_students, Student.id == course_students.c.student_id)
+                        .where(course_students.c.course_id == session.course_id)
+                    )
+                ).scalars().all()
+
+            if not students:
+                continue
+
+            student = random.choice(students)
+            event = {
+                "type": "attendance",
+                "room_id": room_id,
+                "session_id": session_id,
+                "student_id": str(student.id),
+                "student_name": student.name,
+                "confidence": 0.99,
+                "status": "present",
+            }
+            try:
+                attendance_event_queue.put_nowait(event)
+            except asyncio.QueueFull:
+                pass
+
+        except Exception as exc:
+            logger.warning("[FACE_STUB] Error in stub loop: %s", exc)
+
+    logger.info("[FACE_STUB] Stub recognition loop stopped for session %s", session_id)
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# Real recognition loop
 # ─────────────────────────────────────────────────────────────────────────
 
 async def _recognition_loop(session_id: str, room_id: str) -> None:
-    # Import cv2 lazily — may not be available on all platforms
     try:
         import cv2  # type: ignore[import]
     except ImportError:
@@ -65,9 +124,7 @@ async def _recognition_loop(session_id: str, room_id: str) -> None:
 
     logger.info("Recognition loop started for session %s", session_id)
 
-    # cooldown tracker: {student_id: last_marked_ts}
     last_marked: dict[str, float] = {}
-    # name cache to avoid repeated DB lookups per frame
     name_cache: dict[str, str] = {}
 
     try:
@@ -92,15 +149,13 @@ async def _recognition_loop(session_id: str, room_id: str) -> None:
 
                 last_ts = last_marked.get(sid, 0.0)
                 if now - last_ts < COOLDOWN_SECONDS:
-                    continue  # still in cooldown
+                    continue
 
                 last_marked[sid] = now
 
-                # Fire-and-forget DB write
                 task = asyncio.create_task(_record_attendance(session_id, sid))
                 task.add_done_callback(_log_task_exc)
 
-                # Resolve student name (cached after first lookup)
                 if sid not in name_cache:
                     try:
                         from app.models.db_models import Student
@@ -110,7 +165,6 @@ async def _recognition_loop(session_id: str, room_id: str) -> None:
                     except Exception:
                         name_cache[sid] = sid
 
-                # Push event to WebSocket queue
                 event = {
                     "type": "attendance",
                     "room_id": room_id,
@@ -164,10 +218,21 @@ async def start_recognition(session_id: str, room_id: str = "room1") -> None:
     _stop_event.clear()
     _current_session_id = session_id
     _current_room_id = room_id
-    _loop_task = asyncio.create_task(
-        _recognition_loop(session_id, room_id), name=f"recognition_loop_{session_id}"
+
+    if _FR_AVAILABLE:
+        coro = _recognition_loop(session_id, room_id)
+        name = f"recognition_loop_{session_id}"
+    else:
+        coro = _stub_recognition_loop(session_id, room_id)
+        name = f"recognition_stub_{session_id}"
+
+    _loop_task = asyncio.create_task(coro, name=name)
+    logger.info(
+        "%s task created for session %s room %s",
+        "Recognition" if _FR_AVAILABLE else "Stub recognition",
+        session_id,
+        room_id,
     )
-    logger.info("Recognition loop task created for session %s room %s", session_id, room_id)
 
 
 async def stop_recognition() -> None:

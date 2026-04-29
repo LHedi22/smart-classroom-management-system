@@ -1,7 +1,10 @@
 """
 Integration tests for student enrollment and face encoding API.
 
-face_recognition and cv2 are mocked — tests run without dlib or a camera.
+DeepFace is never imported here — all face encoding logic is mocked at the
+service layer (face_recognition_service.enroll_student_face) rather than at
+the DeepFace/cv2 import level, because enrollment.py no longer imports those
+libraries directly.
 """
 import io
 from unittest.mock import AsyncMock, patch
@@ -13,34 +16,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 pytestmark = pytest.mark.asyncio
 
-FAKE_ENCODING = np.random.rand(128).astype(np.float64)
+FAKE_ENCODING = np.random.rand(128).astype(np.float32)
 
 
 # ── helpers ───────────────────────────────────────────────────────────────
 
 def _tiny_jpeg() -> bytes:
-    """Fake image bytes — cv2.imdecode is always mocked so content is irrelevant."""
+    """Fake image bytes — content is irrelevant; service is mocked."""
     return b"FAKE_IMAGE_BYTES_FOR_TEST"
-
-
-def _mock_cv2():
-    """Return a MagicMock that acts like cv2 for enrollment purposes."""
-    from unittest.mock import MagicMock
-    m = MagicMock()
-    m.imdecode.return_value = np.zeros((100, 100, 3), dtype=np.uint8)
-    m.cvtColor.return_value = np.zeros((100, 100, 3), dtype=np.uint8)
-    m.IMREAD_COLOR = 1
-    m.COLOR_BGR2RGB = 4
-    return m
-
-
-def _mock_fr(encoding: np.ndarray | None = None):
-    """Return a MagicMock for face_recognition."""
-    from unittest.mock import MagicMock
-    enc = encoding if encoding is not None else FAKE_ENCODING.copy()
-    m = MagicMock()
-    m.face_encodings.return_value = [enc]
-    return m
 
 
 # ── student CRUD ─────────────────────────────────────────────────────────
@@ -88,10 +71,11 @@ async def test_enroll_face_creates_encoding(client: AsyncClient) -> None:
     student_id = cr.json()["id"]
 
     with (
-        patch("app.api.enrollment._FR_AVAILABLE", True),
-        patch("app.api.enrollment._CV2_AVAILABLE", True),
-        patch("app.api.enrollment.fr", _mock_fr()),
-        patch("app.api.enrollment.cv2", _mock_cv2()),
+        patch(
+            "app.services.face_recognition_service.face_recognition_service.enroll_student_face",
+            new_callable=AsyncMock,
+            return_value={"encoding": FAKE_ENCODING.copy(), "frames_used": 1, "mode": "real"},
+        ),
         patch(
             "app.services.face_recognition_service.face_recognition_service.reload_encodings",
             new_callable=AsyncMock,
@@ -106,21 +90,17 @@ async def test_enroll_face_creates_encoding(client: AsyncClient) -> None:
     data = resp.json()
     assert data["student_id"] == student_id
     assert data["frames_captured"] == 1
-    assert "enrolled" in data["message"].lower() or "successfully" in data["message"].lower()
+    assert "successfully" in data["message"].lower()
 
 
 async def test_enroll_face_no_face_detected_returns_422(client: AsyncClient) -> None:
     cr = await client.post("/api/students", json={"name": "Frank", "student_id": "S006"})
     student_id = cr.json()["id"]
 
-    no_face_fr = _mock_fr()
-    no_face_fr.face_encodings.return_value = []  # no face found
-
-    with (
-        patch("app.api.enrollment._FR_AVAILABLE", True),
-        patch("app.api.enrollment._CV2_AVAILABLE", True),
-        patch("app.api.enrollment.fr", no_face_fr),
-        patch("app.api.enrollment.cv2", _mock_cv2()),
+    with patch(
+        "app.services.face_recognition_service.face_recognition_service.enroll_student_face",
+        new_callable=AsyncMock,
+        return_value={"encoding": None, "frames_used": 0, "mode": "real"},
     ):
         resp = await client.post(
             f"/api/students/{student_id}/enroll-face",
@@ -138,20 +118,27 @@ async def test_enroll_face_student_not_found(client: AsyncClient) -> None:
     assert resp.status_code == 404
 
 
-async def test_enroll_face_library_unavailable(client: AsyncClient) -> None:
+async def test_enroll_face_stub_mode_stores_placeholder(client: AsyncClient) -> None:
+    """In stub mode (FACE_RECOGNITION_ENABLED=false), enrollment succeeds with a
+    zeroed placeholder encoding rather than raising 503."""
     cr = await client.post("/api/students", json={"name": "Grace", "student_id": "S007"})
     student_id = cr.json()["id"]
 
-    with (
-        patch("app.api.enrollment._FR_AVAILABLE", False),
-        patch("app.api.enrollment._CV2_AVAILABLE", False),
+    # _FR_AVAILABLE is already False in the test environment, so no extra patching
+    # needed for the service itself — just suppress the DB reload call.
+    with patch(
+        "app.services.face_recognition_service.face_recognition_service.reload_encodings",
+        new_callable=AsyncMock,
     ):
         resp = await client.post(
             f"/api/students/{student_id}/enroll-face",
             files={"images": ("face.jpg", io.BytesIO(_tiny_jpeg()), "image/jpeg")},
         )
 
-    assert resp.status_code == 503
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["frames_captured"] == 0
+    assert "stub" in data["message"].lower()
 
 
 # ── FaceRecognitionService unit tests ─────────────────────────────────────
@@ -165,10 +152,10 @@ async def test_recognize_faces_returns_empty_without_library() -> None:
         assert result == []
 
 
-async def test_count_heads_returns_zero_without_cv2() -> None:
+async def test_count_heads_returns_zero_without_library() -> None:
     from app.services.face_recognition_service import FaceRecognitionService
 
-    with patch("app.services.face_recognition_service._CV2_AVAILABLE", False):
+    with patch("app.services.face_recognition_service._FR_AVAILABLE", False):
         svc = FaceRecognitionService()
         assert svc.count_heads(np.zeros((480, 640, 3), dtype=np.uint8)) == 0
 
@@ -184,14 +171,17 @@ async def test_reload_encodings_populates_dict(test_engine, db_session: AsyncSes
     db_session.add(student)
     await db_session.flush()
 
-    vec = np.random.rand(128).astype(np.float64)
+    vec = np.random.rand(128).astype(np.float32)
     db_session.add(FaceEncoding(student_id=student.id, encoding=vec.tobytes()))
     await db_session.commit()
 
     TestSessionLocal = async_sessionmaker(test_engine, expire_on_commit=False)
 
     svc = FaceRecognitionService()
-    with patch("app.services.face_recognition_service.AsyncSessionLocal", TestSessionLocal):
+    with (
+        patch("app.services.face_recognition_service._FR_AVAILABLE", True),
+        patch("app.services.face_recognition_service.AsyncSessionLocal", TestSessionLocal),
+    ):
         await svc.reload_encodings()
 
     assert student.id in svc.known_encodings

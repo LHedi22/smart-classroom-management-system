@@ -7,7 +7,7 @@ from fastapi import FastAPI
 from app.config import settings
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import alerts, attendance, control, courses, enrollment, sensors, sessions, websocket
+from app.api import alerts, attendance, auth, control, courses, enrollment, sensors, sessions, websocket
 from app.models.schemas import HealthResponse, MoodleConnectionStatus
 from app.redis_client import close_redis, get_redis_pool
 from app.services.alert_engine import alert_engine
@@ -45,6 +45,9 @@ async def lifespan(app: FastAPI):
     _run_migrations()
     await start_mqtt_bridge()
     alert_engine.start()
+    if settings.mock_mode:
+        from app.services.mock_sensor import start_mock_publisher
+        start_mock_publisher(alert_engine._scheduler, settings.room_id)
     broadcaster_tasks = [
         asyncio.create_task(_drain_queue(sensor_event_queue),    name="sensor_broadcaster"),
         asyncio.create_task(_drain_queue(attendance_event_queue), name="attendance_broadcaster"),
@@ -106,6 +109,7 @@ app.add_middleware(
 )
 
 # Routers
+app.include_router(auth.router,       prefix="/api/auth",       tags=["auth"])
 app.include_router(sensors.router,    prefix="/api/sensors",    tags=["sensors"])
 app.include_router(courses.router,    prefix="/api/courses",    tags=["courses"])
 app.include_router(sessions.router,   prefix="/api/sessions",   tags=["sessions"])

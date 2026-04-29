@@ -2,8 +2,9 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.deps import get_current_professor
 from app.database import get_db
-from app.models.db_models import Alert
+from app.models.db_models import Alert, Course, Professor, ProfessorRole, Session
 from app.models.schemas import AlertResponse
 
 router = APIRouter()
@@ -15,10 +16,31 @@ async def list_alerts(
     acknowledged: bool | None = Query(None),
     limit: int = Query(50, ge=1, le=500),
     db: AsyncSession = Depends(get_db),
+    current: Professor = Depends(get_current_professor),
 ) -> list[Alert]:
     q = select(Alert).order_by(Alert.created_at.desc()).limit(limit)
-    if room_id is not None:
-        q = q.where(Alert.room_id == room_id)
+
+    if current.role == ProfessorRole.professor:
+        # Restrict to rooms where this professor has sessions
+        rooms_result = await db.execute(
+            select(Session.room_id)
+            .join(Course, Session.course_id == Course.id)
+            .where(Course.professor_id == current.id)
+            .distinct()
+        )
+        prof_rooms = rooms_result.scalars().all()
+        if room_id is not None:
+            if room_id not in prof_rooms:
+                return []
+            q = q.where(Alert.room_id == room_id)
+        elif prof_rooms:
+            q = q.where(Alert.room_id.in_(prof_rooms))
+        else:
+            return []
+    else:
+        if room_id is not None:
+            q = q.where(Alert.room_id == room_id)
+
     if acknowledged is not None:
         q = q.where(Alert.acknowledged == acknowledged)
     result = await db.execute(q)
@@ -26,7 +48,11 @@ async def list_alerts(
 
 
 @router.patch("/{alert_id}/acknowledge", response_model=AlertResponse)
-async def acknowledge_alert(alert_id: str, db: AsyncSession = Depends(get_db)) -> Alert:
+async def acknowledge_alert(
+    alert_id: str,
+    db: AsyncSession = Depends(get_db),
+    _: Professor = Depends(get_current_professor),
+) -> Alert:
     alert = await db.get(Alert, alert_id)
     if alert is None:
         raise HTTPException(status_code=404, detail="Alert not found")

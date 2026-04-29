@@ -1,5 +1,6 @@
 services:
-  # ── PostgreSQL 15 ────────────────────────────────────────────────────────
+
+  # ── PostgreSQL 15 ─────────────────────────────────────────────────────────
   postgres:
     image: postgres:15-alpine
     container_name: smartcam-postgres
@@ -18,7 +19,7 @@ services:
       timeout: 5s
       retries: 5
 
-  # ── Redis 7 ──────────────────────────────────────────────────────────────
+  # ── Redis 7 ───────────────────────────────────────────────────────────────
   redis:
     image: redis:7-alpine
     container_name: smartcam-redis
@@ -33,11 +34,23 @@ services:
       timeout: 5s
       retries: 5
 
-  # ── MariaDB (Moodle sidecar) ──────────────────────────────────────────────
+  # ── Mosquitto MQTT Broker ─────────────────────────────────────────────────
+  mosquitto:
+    image: eclipse-mosquitto:2
+    container_name: smartcam-mosquitto
+    restart: unless-stopped
+    ports:
+      - "1883:1883"
+    volumes:
+      - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - mosquitto_data:/mosquitto/data
+
+  # ── MariaDB (Moodle sidecar) — start with: docker compose --profile moodle up -d
   mariadb:
     image: mariadb:10.6
     container_name: smartcam-mariadb
     restart: unless-stopped
+    profiles: [moodle]
     environment:
       MARIADB_ROOT_PASSWORD: moodlerootpass
       MARIADB_DATABASE: moodle
@@ -51,11 +64,12 @@ services:
       timeout: 10s
       retries: 10
 
-  # ── Moodle 4.x (Bitnami) ─────────────────────────────────────────────────
+  # ── Moodle 4.x (Bitnami) — start with: docker compose --profile moodle up -d
   moodle:
     image: bitnami/moodle:4
     container_name: smartcam-moodle
     restart: unless-stopped
+    profiles: [moodle]
     depends_on:
       mariadb:
         condition: service_healthy
@@ -77,9 +91,52 @@ services:
       - moodle_data:/bitnami/moodle
       - moodledata_data:/bitnami/moodledata
 
+  # ── FastAPI Backend ───────────────────────────────────────────────────────
+  backend:
+    build: ./backend
+    container_name: smartcam-backend
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      mosquitto:
+        condition: service_started
+    environment:
+      DATABASE_URL: postgresql+asyncpg://smartcam:smartcam@postgres:5432/smartclassroom
+      REDIS_URL: redis://redis:6379
+      MQTT_BROKER_HOST: mosquitto
+      MQTT_BROKER_PORT: "1883"
+      MOODLE_URL: http://moodle:8080
+      MOODLE_TOKEN: ""
+      SECRET_KEY: changeme
+      ROOM_ID: room1
+      MOCK_MODE: "true"
+      ACCESS_TOKEN_EXPIRE_MINUTES: "480"
+      REQUIRE_AUTH: "false"
+      TEMP_AC_ON_THRESHOLD: "28"
+      TEMP_AC_OFF_THRESHOLD: "22"
+      AIR_QUALITY_ALERT_THRESHOLD: "500"
+      FACE_RECOGNITION_THRESHOLD: "0.6"
+      RECOGNITION_FPS: "2"
+
+  # ── React Frontend (nginx) ────────────────────────────────────────────────
+  frontend:
+    build: ./frontend
+    container_name: smartcam-frontend
+    restart: unless-stopped
+    ports:
+      - "3000:80"
+    depends_on:
+      - backend
+
 volumes:
   postgres_data:
   redis_data:
+  mosquitto_data:
   mariadb_data:
   moodle_data:
   moodledata_data:

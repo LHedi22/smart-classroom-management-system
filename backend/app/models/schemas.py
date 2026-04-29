@@ -3,7 +3,27 @@ from typing import Any
 
 from pydantic import BaseModel, field_validator
 
-from app.models.db_models import AlertType, AttendanceStatus, SensorType, SessionStatus
+from app.models.db_models import AlertType, AttendanceStatus, ProfessorRole, SensorType, SessionStatus
+
+
+# ── Professor ─────────────────────────────────────────────────────────────
+
+class ProfessorResponse(BaseModel):
+    id: str
+    name: str
+    email: str
+    role: ProfessorRole
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class LoginResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    role: str
+    professor_id: str
+    name: str
 
 
 # ── Student ────────────────────────────────────────────────────────────────
@@ -33,11 +53,12 @@ class CourseBase(BaseModel):
 
 
 class CourseCreate(CourseBase):
-    pass
+    professor_id: str | None = None
 
 
 class CourseResponse(CourseBase):
     id: str
+    professor_id: str | None = None
 
     model_config = {"from_attributes": True}
 
@@ -68,6 +89,51 @@ class SessionWithSummary(SessionResponse):
     present_count: int = 0
     total_students: int = 0
     course: CourseResponse | None = None
+    # Derived at response-time — never stored in the DB.
+    # live: active AND started_at <= now | upcoming: pre-scheduled | done: ended
+    display_status: str = "done"
+    course_name: str = ""
+    course_code: str = ""
+
+
+class AttendanceDetailItem(BaseModel):
+    student_id: str
+    name: str
+    student_number: str
+    status: AttendanceStatus
+    detected_at: datetime
+
+
+class SessionDetailResponse(SessionWithSummary):
+    total_enrolled: int = 0
+    attendance: list[AttendanceDetailItem] = []
+
+
+# ── Sensor summary (done sessions) ─────────────────────────────────────────
+
+class SensorStats(BaseModel):
+    avg: float
+    min: float
+    max: float
+
+
+class SessionSensorsSummaryResponse(BaseModel):
+    session_id: str
+    temperature: SensorStats | None = None
+    humidity: SensorStats | None = None
+    air_quality: SensorStats | None = None
+    sound: SensorStats | None = None
+
+
+class SensorLatestItem(BaseModel):
+    value: float
+    unit: str
+    recorded_at: datetime
+
+
+class SessionSensorsLatestResponse(BaseModel):
+    session_id: str
+    sensors: dict[str, SensorLatestItem]
 
 
 # ── Attendance ─────────────────────────────────────────────────────────────

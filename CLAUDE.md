@@ -58,7 +58,7 @@ smart-classroom/
 │   │   │   ├── mock_sensor.py
 │   │   │   ├── moodle_client.py
 │   │   │   ├── insights_engine.py   ← NEW Phase 19: at-risk detection, comfort score, correlation queries
-│   │   │   └── ai_summary.py        ← NEW Phase 20: Ollama/phi3:mini client — anomaly narrative generator (httpx, no extra deps)
+│   │   │   └── ai_summary.py        ← NEW Phase 20: Ollama client — anomaly narrative generator; compact context serializer; num_predict cap; model via OLLAMA_MODEL env var
 │   │   └── models/
 │   │       ├── db_models.py         ← SQLAlchemy ORM
 │   │       └── schemas.py           ← Pydantic schemas (+ InsightResponse, AtRiskStudent, CorrelationPoint added Phase 19)
@@ -148,7 +148,7 @@ smart-classroom/
 - **Face recognition:** DeepFace (Facenet model) + opencv-python-headless — installed natively on RPi only; Docker image runs a stub (`FACE_RECOGNITION_ENABLED=false`)
 - **Scheduler:** APScheduler (alert engine, periodic jobs + mock sensor when MOCK_MODE=true)
 - **Moodle integration:** httpx (async HTTP client)
-- **[NEW Phase 20] AI summaries:** httpx → Ollama REST API (`/api/chat`) — model `phi3:mini`; no new dependencies; called only for anomaly/alert narratives; URL configured via `OLLAMA_BASE_URL`
+- **[NEW Phase 20] AI summaries:** httpx → Ollama REST API (`/api/chat`) — model configurable via `OLLAMA_MODEL` (default `phi3:latest`); no new dependencies; context serialised as compact plain-text sentences (not raw JSON) for small-model compatibility; `num_predict: 120` token cap prevents CPU timeout; URL configured via `OLLAMA_BASE_URL`
 - **[NEW Phase 22] PDF export:** ReportLab — server-side PDF generation for session and course reports
 
 ### Frontend
@@ -340,7 +340,7 @@ Default room_id for this project: `room1`
 - `GET /api/insights/environment/ac-effectiveness` — per-session: time between AC ON and temp drop below threshold; returns avg lag in minutes
 - `GET /api/insights/correlations/temp-vs-attendance` — scatter data: each point = one session, x=avg_temp, y=attendance_rate
 - `GET /api/insights/correlations/airquality-vs-sound` — scatter: x=avg_air_quality, y=pct_time_sound_detected per session
-- `GET /api/insights/ai-summary` — params: `scope` (session|course|room|global), `id`; builds context blob and calls Ollama `/api/chat` with phi3:mini; returns `{narrative: str, generated_at: datetime}`; cached in Redis for 10 min per (scope, id); 503 if Ollama unreachable
+- `GET /api/insights/ai-summary` — params: `scope` (session|course|room|global), `id`; builds compact plain-text prompt and calls Ollama `/api/chat` with model from `OLLAMA_MODEL`; returns `{narrative: str, generated_at: datetime}`; cached in Redis for 10 min per (scope, id); 503 if Ollama unreachable or model error
 - `GET /api/insights/export/session/{id}` — returns PDF binary (ReportLab); attendance list + sensor summary + AI narrative
 - `GET /api/insights/export/course/{id}` — returns PDF; all sessions, per-student rates, at-risk flags
 - `GET /api/insights/export/course/{id}/csv` — returns CSV of raw attendance records for the course
@@ -394,6 +394,9 @@ AT_RISK_THRESHOLD=0.70
 # Consecutive absences threshold: triggers at-risk flag regardless of overall rate
 AT_RISK_CONSECUTIVE_ABSENCES=3
 
+# Ollama model name — must match exactly what `ollama list` shows (e.g. phi3:latest, llama3.2:1b)
+OLLAMA_MODEL=phi3:latest
+
 # AI summary cache TTL in seconds (default 600 = 10 minutes)
 AI_SUMMARY_CACHE_TTL=600
 ```
@@ -432,21 +435,17 @@ clamped to [0, 100]
 ```
 
 ### AI Summary Context Schema
-`ai_summary.py` builds a structured context blob and POSTs it to Ollama's `/api/chat` endpoint with model `phi3:mini`. The fixed system prompt instructs the model to produce a 3–5 sentence narrative identifying the most important finding and one concrete recommendation. If Ollama is unreachable, the endpoint returns HTTP 503 with a message indicating the expected URL — no crash. Results are cached in Redis per `(scope, id)` key for `AI_SUMMARY_CACHE_TTL` seconds.
+`ai_summary.py` builds a compact plain-text prompt (via `_context_to_prompt()`) and POSTs it to Ollama's `/api/chat` endpoint with the model specified by `OLLAMA_MODEL`. The system prompt instructs the model to produce 2–3 sentences identifying the key finding and one concrete recommendation. Output is capped at `num_predict: 120` tokens to ensure completion within the 90s timeout on CPU. If Ollama is unreachable or returns an error, the endpoint returns HTTP 503 — no crash. Results are cached in Redis per `(scope, id)` key for `AI_SUMMARY_CACHE_TTL` seconds.
 
-Context blob shape (JSON, passed as user message):
-```json
-{
-  "scope": "course",
-  "course_name": "CS301",
-  "period": "last 8 weeks",
-  "attendance_summary": { "avg_rate": 0.74, "trend": "declining", "sessions": 12 },
-  "at_risk_students": 3,
-  "env_summary": { "avg_temp": 28.4, "avg_air_quality": 420, "comfort_score": 62 },
-  "recent_alerts": ["temp_high x3", "air_quality_high x1"],
-  "anomalies": ["attendance dropped 22% in week 6", "3 sessions above 30°C"]
-}
+Prompt example (compact plain-text, not raw JSON):
 ```
+Scope: course — CS301 — Intro to Computing (last 8 weeks). Attendance: 74% (declining trend). Sessions analysed: 12. Students at risk: 3. Environment: comfort 62/100, avg temp 28.4°C, avg AQ 420 ppm. Recent alerts: temp_high x3, air_quality_high x1. Anomalies: attendance dropped 22% in week 6.
+```
+
+Exception handling in `generate_summary()`:
+- `httpx.TransportError` (ConnectError, TimeoutException, etc.) → 503 Ollama unreachable
+- `httpx.HTTPStatusError` (Ollama returns 4xx/5xx, e.g. model not found) → 503 Ollama error
+- Any other exception → 502
 
 ### Export Format
 - **Session PDF**: cover (course, date, professor), attendance table (name, status, detected_at), sensor summary table (avg/min/max per type), AI narrative paragraph, alert log
@@ -587,9 +586,13 @@ Frontend activates client-side demo mode if no WS sensor message within 8s.
 | At-risk computed at query time, never stored | Rate changes after every session; storing requires background job | Phase 19 |
 | Comfort score formula is purely arithmetic, no ML | Reproducible, explainable, zero inference latency | Phase 19 |
 | AI summary scoped to anomaly/alert context only | Avoids overly broad AI calls; focused narrative is more actionable | Phase 20 |
-| AI summary uses Ollama/phi3:mini via httpx | No Anthropic SDK dependency; httpx already in requirements; zero new packages; model is local and free | Phase 20 |
+| AI summary uses Ollama via httpx | No Anthropic SDK dependency; httpx already in requirements; zero new packages; model is local and free | Phase 20 |
 | AI summary cached in Redis with 10-min TTL | Ollama inference on CPU takes 2–5s — unacceptable on every page load | Phase 20 |
 | OLLAMA_BASE_URL defaults to localhost:11434 | Works out-of-box for local Ollama; override to http://ollama:11434 when running Ollama as a Docker service | Phase 20 |
+| _context_to_prompt() serialises context as compact sentences, not json.dumps | Small models (phi3, llama3.2:1b) handle short natural-language prompts faster and more reliably than nested JSON blobs; reduces user-message tokens from ~300 to ~80 | Post-Phase 20 fix |
+| num_predict: 120 cap added to Ollama options | Uncapped generation on CPU hit the 60s timeout; 120 tokens completes in under 30s | Post-Phase 20 fix |
+| OLLAMA_MODEL env var replaces hardcoded phi3:mini constant | Model name must match exactly what `ollama list` shows; makes it swappable in docker-compose without a code rebuild | Post-Phase 20 fix |
+| httpx.TransportError replaces httpx.ConnectError in generate_summary() | ConnectError only catches refused connections; TimeoutException and RemoteProtocolError (common on Docker networking / CPU-slow Ollama) fell through to 502 instead of 503 | Post-Phase 20 fix |
 | ReportLab chosen for PDF over WeasyPrint | ReportLab is pure Python, no system font/CSS dependencies; works in Docker without extra apt packages | Phase 22 |
 | CSV export is raw SQL result serialized via csv.DictWriter | No pandas dependency; lighter on the Pi | Phase 22 |
 
@@ -608,7 +611,7 @@ Frontend activates client-side demo mode if no WS sensor message within 8s.
 | Single-room design | Room ID hardcoded to room1 | Change ROOM_ID in config.h and .env |
 | No HTTPS / WSS | Plain HTTP only | Add nginx SSL termination for public deployment |
 | Dashboard live but no data (no ESP32) | Redis empty without MQTT publisher | Set MOCK_MODE=true |
-| AI summary latency | Ollama/phi3:mini inference takes 2–5s on CPU | Cached in Redis for 10 min; AiSummaryCard shows skeleton loader on first request |
+| AI summary latency | Ollama inference on CPU takes 10–30s on first request | Capped at 120 output tokens; cached in Redis for 10 min; AiSummaryCard shows skeleton loader on first request |
 | AI summary unavailable | 503 if Ollama is not running or unreachable | AiSummaryCard renders a clear "not reachable" message instead of crashing |
 
 ---

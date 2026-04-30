@@ -62,7 +62,16 @@
       "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); [print\\(f\\\\\"  {k}: avg={v['avg']} min={v['min']} max={v['max']}\\\\\"\\) for k,v in d.items\\(\\) if k!='session_id']\")",
       "Bash(curl -s -X POST http://localhost:8000/api/auth/login -d 'username=admin@smu.tn&password=admin123' -H 'Content-Type: application/x-www-form-urlencoded')",
       "Bash(python3 -c ' *)",
-      "Bash(npx skills *)"
+      "Bash(npx skills *)",
+      "Bash(curl -s http://localhost:8000/api/insights/overview)",
+      "Bash(curl -s http://localhost:8000/api/insights/students/at-risk)",
+      "Bash(curl -s \"http://localhost:8000/api/insights/attendance/trend?weeks=4\")",
+      "Bash(curl -s \"http://localhost:8000/api/insights/environment/comfort-score?room_id=room1\")",
+      "Bash(curl -s http://localhost:8000/api/insights/correlations/temp-vs-attendance)",
+      "Bash(curl -s \"http://localhost:8000/api/insights/ai-summary?scope=global&id=all\")",
+      "Bash(curl -s \"http://localhost:8000/api/insights/ai-summary?scope=course&id=badid\")",
+      "Bash(curl -s \"http://localhost:8000/api/insights/ai-summary?scope=unknown&id=x\")",
+      "Bash(node -e ' *)"
     ]
   }
 }

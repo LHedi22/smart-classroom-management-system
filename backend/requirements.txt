@@ -39,3 +39,8 @@ httpx==0.27.0            # async test client for FastAPI
 
 
 bcrypt==4.0.1
+
+# AI summaries (Phase 20) — uses httpx (already listed above) to call Ollama
+
+# PDF export (Phase 22)
+reportlab>=4.1.0

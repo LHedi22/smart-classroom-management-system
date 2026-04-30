@@ -16,6 +16,7 @@ An IoT-based Smart Classroom Management System for SMU that:
 - Controls AC and lighting via relay module (automatic thresholds + manual override)
 - Streams all data to a professor-facing React dashboard over WebSocket
 - Syncs attendance to a local Docker Moodle instance via its REST API
+- **[NEW Phase 19–22]** Provides a full Insights system: at-risk student flagging, attendance × environment correlations, AI-generated anomaly summaries, and exportable PDF/CSV reports
 
 ---
 
@@ -47,39 +48,54 @@ smart-classroom/
 │   │   │   ├── sessions.py
 │   │   │   ├── alerts.py
 │   │   │   ├── enrollment.py
-│   │   │   └── websocket.py
+│   │   │   ├── websocket.py
+│   │   │   └── insights.py          ← NEW Phase 19: all insights endpoints
 │   │   ├── services/
 │   │   │   ├── mqtt_bridge.py
-│   │   │   ├── face_recognition_service.py  ← stub when FACE_RECOGNITION_ENABLED=false; real DeepFace on RPi
-│   │   │   ├── recognition_loop.py          ← real camera loop OR stub emitter (45 s synthetic events)
+│   │   │   ├── face_recognition_service.py
+│   │   │   ├── recognition_loop.py
 │   │   │   ├── alert_engine.py
-│   │   │   ├── mock_sensor.py       ← Phase 11: mock publisher (active when MOCK_MODE=true)
-│   │   │   └── moodle_client.py
+│   │   │   ├── mock_sensor.py
+│   │   │   ├── moodle_client.py
+│   │   │   ├── insights_engine.py   ← NEW Phase 19: at-risk detection, comfort score, correlation queries
+│   │   │   └── ai_summary.py        ← NEW Phase 20: Ollama/phi3:mini client — anomaly narrative generator (httpx, no extra deps)
 │   │   └── models/
 │   │       ├── db_models.py         ← SQLAlchemy ORM
-│   │       └── schemas.py           ← Pydantic schemas
+│   │       └── schemas.py           ← Pydantic schemas (+ InsightResponse, AtRiskStudent, CorrelationPoint added Phase 19)
 │   ├── alembic/
 │   ├── alembic.ini
-│   ├── requirements.txt
+│   ├── requirements.txt             ← reportlab added Phase 22; Phase 20 uses httpx (already present)
 │   ├── .dockerignore
 │   └── Dockerfile
 │
 ├── frontend/                        ← React + Vite + Tailwind
 │   ├── src/
-│   │   ├── tokens.css               ← NEW Phase 18: CSS custom property design token system (single source of truth)
-│   │   ├── index.css                ← MODIFIED Phase 18: all component classes; no glassmorphism; references tokens.css vars only
+│   │   ├── tokens.css
+│   │   ├── index.css
 │   │   ├── pages/
-│   │   │   ├── Dashboard.jsx        ← MODIFIED Phase 18: AreaChart sparklines, icon circles, token-based stat cards
-│   │   │   ├── Attendance.jsx       ← MODIFIED Phase 18: StatPills, illustrated empty state, skeleton loader
-│   │   │   ├── Control.jsx          ← MODIFIED Phase 18: tactile relay buttons, sensor pills, auto-rule card
-│   │   │   ├── Enrollment.jsx       ← MODIFIED Phase 18: purple avatar list, camera preview, thumbnail grid
-│   │   │   ├── History.jsx          ← MODIFIED Phase 18: attendance breakdown bar, course filter, chevron expand
-│   │   │   └── Login.jsx            ← MODIFIED Phase 18: branded left panel, click-to-fill demo accounts
+│   │   │   ├── Dashboard.jsx        ← MODIFIED Phase 19: comfort score pill + at-risk mini-card
+│   │   │   ├── Attendance.jsx       ← MODIFIED Phase 19: per-student risk badge + streak indicator
+│   │   │   ├── Control.jsx
+│   │   │   ├── Enrollment.jsx
+│   │   │   ├── History.jsx          ← MODIFIED Phase 19: attendance trend arrow per session
+│   │   │   ├── Login.jsx
+│   │   │   └── Insights.jsx         ← NEW Phase 19: dedicated Insights page (3 tabs: Overview, Students, Environment)
 │   │   ├── components/
-│   │   │   ├── Layout.jsx           ← MODIFIED Phase 18: 240px blue sidebar, inline SVG nav icons, white active border
-│   │   │   └── DemoModeBanner.jsx   ← MODIFIED Phase 18/11: token-based warning banner
+│   │   │   ├── Layout.jsx           ← MODIFIED Phase 19: Insights nav item added to sidebar
+│   │   │   ├── DemoModeBanner.jsx
+│   │   │   └── insights/
+│   │   │       ├── KpiCards.jsx         ← NEW Phase 19: top-level KPI strip
+│   │   │       ├── AttendanceTrendChart.jsx  ← NEW Phase 19: AreaChart week-by-week per course
+│   │   │       ├── DayOfWeekHeatmap.jsx      ← NEW Phase 19: attendance heatmap grid
+│   │   │       ├── AtRiskTable.jsx           ← NEW Phase 19: flagged students list with drill-down
+│   │   │       ├── ComfortScoreCard.jsx      ← NEW Phase 19: composite 0–100 score card
+│   │   │       ├── SensorTrendChart.jsx      ← NEW Phase 19: multi-sensor AreaChart over session history
+│   │   │       ├── CorrelationScatter.jsx    ← NEW Phase 19: temp vs attendance scatter
+│   │   │       ├── AiSummaryCard.jsx         ← NEW Phase 20: AI narrative card with loading skeleton
+│   │   │       └── ExportButton.jsx          ← NEW Phase 22: PDF/CSV export trigger
 │   │   ├── hooks/
-│   │   │   └── useLiveSensors.js    ← MODIFIED Phase 11: falls back to mock generator after 5s disconnect
+│   │   │   ├── useLiveSensors.js
+│   │   │   └── useInsights.js       ← NEW Phase 19: fetches all insights endpoints, exposes loading/error states
 │   │   └── api/
 │   │       └── client.js
 │   ├── package.json
@@ -89,10 +105,10 @@ smart-classroom/
 │   └── Dockerfile
 │
 └── docs/
-├── mqtt_schema.md
-├── api_contracts.md
-├── wiring_diagram.md
-└── rpi_setup.md                 ← NEW Phase 12: step-by-step Raspberry Pi setup runbook
+    ├── mqtt_schema.md
+    ├── api_contracts.md
+    ├── wiring_diagram.md
+    └── rpi_setup.md
 
 ---
 
@@ -132,22 +148,24 @@ smart-classroom/
 - **Face recognition:** DeepFace (Facenet model) + opencv-python-headless — installed natively on RPi only; Docker image runs a stub (`FACE_RECOGNITION_ENABLED=false`)
 - **Scheduler:** APScheduler (alert engine, periodic jobs + mock sensor when MOCK_MODE=true)
 - **Moodle integration:** httpx (async HTTP client)
+- **[NEW Phase 20] AI summaries:** httpx → Ollama REST API (`/api/chat`) — model `phi3:mini`; no new dependencies; called only for anomaly/alert narratives; URL configured via `OLLAMA_BASE_URL`
+- **[NEW Phase 22] PDF export:** ReportLab — server-side PDF generation for session and course reports
 
 ### Frontend
 - **Framework:** React 18 + Vite
 - **Styling:** TailwindCSS v3 + CSS custom properties design token system (`tokens.css`)
 - **Typography:** DM Sans (headings, 600/700) + Inter (body, 400/500) via Google Fonts
-- **Charts:** Recharts (`AreaChart` + `linearGradient` fill for sparklines)
+- **Charts:** Recharts (`AreaChart`, `ScatterChart`, `linearGradient` fill)
 - **Real-time:** Native WebSocket via custom hook
 - **HTTP client:** axios
-- **Design system:** `tokens.css` — single source of truth for all colors, shadows, and type scale; all component classes in `index.css` reference CSS vars only; no hardcoded hex values outside `tokens.css`
+- **Design system:** `tokens.css` — single source of truth for all colors, shadows, and type scale
 
 ### Infrastructure
-- **MQTT Broker:** Mosquitto 2 (Docker — `eclipse-mosquitto:2`, anonymous, port 1883)
+- **MQTT Broker:** Mosquitto 2 (Docker)
 - **Database:** PostgreSQL 15 (Docker)
 - **Cache:** Redis 7 (Docker)
-- **Frontend server:** nginx (Docker — serves compiled Vite bundle, proxies `/api` and `/ws` to backend)
-- **LMS:** Moodle 4.x (Docker — optional, start with `--profile moodle`)
+- **Frontend server:** nginx (Docker)
+- **LMS:** Moodle 4.x (Docker — optional, `--profile moodle`)
 - **Container orchestration:** Docker Compose
 
 ### Docker Quick Start
@@ -227,16 +245,16 @@ Default room_id for this project: `room1`
 - room_id (VARCHAR) — e.g. "room1"
 - started_at (TIMESTAMP)
 - ended_at (TIMESTAMP NULLABLE)
-- status (ENUM: active, ended, upcoming) — `upcoming` added Phase 16 for pre-scheduled sessions
-- display_status (computed, NOT stored): `live` = active AND started_at ≤ now | `upcoming` = status==upcoming | `done` = ended
+- status (ENUM: active, ended, upcoming)
+- display_status (computed, NOT stored): `live` | `upcoming` | `done`
 
 **attendance_records**
 - id (UUID PK)
 - session_id (FK → sessions)
 - student_id (FK → students)
 - status (ENUM: present, absent, late, excused)
-- detected_at (TIMESTAMP) — when face was first recognized
-- adjusted_by (VARCHAR NULLABLE) — "professor" if manually changed
+- detected_at (TIMESTAMP)
+- adjusted_by (VARCHAR NULLABLE)
 - adjusted_at (TIMESTAMP NULLABLE)
 - moodle_synced (BOOLEAN DEFAULT false)
 
@@ -268,56 +286,64 @@ Default room_id for this project: `room1`
 ## API Endpoints
 
 ### Sensors
-- `GET /api/sensors/latest` — latest reading from Redis cache
-- `GET /api/sensors/history` — query params: `room_id`, `type`, `from`, `to`
-- `GET /api/sessions/{id}/sensors/latest` — most recent reading per sensor type within the session's time window (polling fallback for live sessions)
-- `GET /api/sessions/{id}/sensors/summary` — avg/min/max per sensor type for a done session (HTTP 400 if session not ended)
+- `GET /api/sensors/latest`
+- `GET /api/sensors/history` — params: `room_id`, `type`, `from`, `to`
+- `GET /api/sessions/{id}/sensors/latest`
+- `GET /api/sessions/{id}/sensors/summary`
 
 ### Sessions
-- `POST /api/sessions/start` — body: `{course_id, room_id}`
+- `POST /api/sessions/start`
 - `POST /api/sessions/{id}/end`
-- `GET /api/sessions` — list with filters
+- `GET /api/sessions`
 - `GET /api/sessions/{id}`
 
 ### Control
-- `POST /api/control/ac` — body: `{room_id, action: "on"|"off"|"auto"}` — publishes MQTT + updates Redis
-- `POST /api/control/lighting` — same pattern for lighting relay
-- `GET /api/control/status/{room_id}` — relay states + live sensor values + device_online
+- `POST /api/control/ac`
+- `POST /api/control/lighting`
+- `GET /api/control/status/{room_id}`
 
 ### Alerts
-- `GET /api/alerts` — query params: `room_id`, `acknowledged`, `limit=50`
-- `PATCH /api/alerts/{id}/acknowledge` — marks acknowledged=true
-- `GET /api/alerts/unread-count/{room_id}` — dashboard badge count
+- `GET /api/alerts`
+- `PATCH /api/alerts/{id}/acknowledge`
+- `GET /api/alerts/unread-count/{room_id}`
 
 ### Courses
-- `GET /api/courses` — list all courses
-- `POST /api/courses` — create course
-- `GET /api/courses/{id}` — get course detail
-- `POST /api/courses/{id}/enroll` — body: `{student_ids: [...]}`
+- `GET /api/courses`
+- `POST /api/courses`
+- `GET /api/courses/{id}`
+- `POST /api/courses/{id}/enroll`
 
 ### Attendance
-- `GET /api/sessions/{id}/attendance` — list with student name + number
-- `PATCH /api/attendance/{record_id}` — manual adjustment (sets adjusted_by="professor")
-- `POST /api/sessions/{id}/mark-absent` — bulk-insert absent records for un-marked enrolled students
-- `GET /api/students/{id}/attendance-history` — cross-session attendance history
-
-### Control
-- `POST /api/control/ac` — body: `{room_id, action: "on"|"off"|"auto"}`
-- `POST /api/control/lighting` — body: `{room_id, action: "on"|"off"|"auto"}`
-- `GET /api/control/status/{room_id}`
+- `GET /api/sessions/{id}/attendance`
+- `PATCH /api/attendance/{record_id}`
+- `POST /api/sessions/{id}/mark-absent`
+- `GET /api/students/{id}/attendance-history`
 
 ### Enrollment
 - `GET /api/students`
-- `POST /api/students` — create student
-- `POST /api/students/{id}/enroll-face` — upload face image, compute encoding
+- `POST /api/students`
+- `POST /api/students/{id}/enroll-face`
 - `GET /api/students/{id}/courses`
 
-### Alerts
-- `GET /api/alerts` — query params: `room_id`, `acknowledged`
-- `PATCH /api/alerts/{id}/acknowledge`
-
 ### WebSocket
-- `WS /ws/classroom/{room_id}` — streams: sensor updates, attendance events, alerts
+- `WS /ws/classroom/{room_id}`
+
+### Insights (NEW — Phase 19–22)
+- `GET /api/insights/overview` — KPI summary: total sessions, avg attendance rate, comfort score trend, active alert count; scoped by `professor_id` for professors, all courses for admin
+- `GET /api/insights/attendance/trend` — params: `course_id` (optional), `weeks=8`; returns week-by-week attendance rate array for AreaChart
+- `GET /api/insights/attendance/heatmap` — returns a 7×N matrix (day-of-week × time-slot) of avg attendance rates
+- `GET /api/insights/attendance/decay` — first-session vs last-session attendance rate per course; detects semester drift
+- `GET /api/insights/students/at-risk` — list of students below `threshold` (default 70%) with: name, student_id, attendance_rate, consecutive_absences, courses_at_risk[]; professor sees only their courses, admin sees all
+- `GET /api/insights/students/{id}/profile` — full per-student insight: attendance history across all sessions, trend, risk level, course breakdown
+- `GET /api/insights/environment/comfort-score` — composite 0–100 score from latest temp/humidity/air_quality readings for a room
+- `GET /api/insights/environment/trends` — params: `room_id`, `from`, `to`; avg/min/max per sensor type per day; returns array for multi-sensor AreaChart
+- `GET /api/insights/environment/ac-effectiveness` — per-session: time between AC ON and temp drop below threshold; returns avg lag in minutes
+- `GET /api/insights/correlations/temp-vs-attendance` — scatter data: each point = one session, x=avg_temp, y=attendance_rate
+- `GET /api/insights/correlations/airquality-vs-sound` — scatter: x=avg_air_quality, y=pct_time_sound_detected per session
+- `GET /api/insights/ai-summary` — params: `scope` (session|course|room|global), `id`; builds context blob and calls Ollama `/api/chat` with phi3:mini; returns `{narrative: str, generated_at: datetime}`; cached in Redis for 10 min per (scope, id); 503 if Ollama unreachable
+- `GET /api/insights/export/session/{id}` — returns PDF binary (ReportLab); attendance list + sensor summary + AI narrative
+- `GET /api/insights/export/course/{id}` — returns PDF; all sessions, per-student rates, at-risk flags
+- `GET /api/insights/export/course/{id}/csv` — returns CSV of raw attendance records for the course
 
 ---
 
@@ -342,15 +368,11 @@ MOODLE_TOKEN=your_moodle_token_here
 SECRET_KEY=changeme-use-a-long-random-string-in-production
 ROOM_ID=room1
 
-# Set to true to publish fake sensor data without ESP32 hardware
 MOCK_MODE=false
-
-# Set to true only on Raspberry Pi with DeepFace installed natively (see docs/rpi_setup.md §8)
 FACE_RECOGNITION_ENABLED=false
 
 # ── Auth ──────────────────────────────────────────────────────────────────
 ACCESS_TOKEN_EXPIRE_MINUTES=480
-# Set to true in production to require a valid JWT on all requests
 REQUIRE_AUTH=false
 
 # ── Auto-control thresholds ───────────────────────────────────────────────
@@ -359,6 +381,21 @@ TEMP_AC_OFF_THRESHOLD=22
 AIR_QUALITY_ALERT_THRESHOLD=500
 FACE_RECOGNITION_THRESHOLD=0.6
 RECOGNITION_FPS=2
+
+# ── Insights (NEW Phase 19–22) ────────────────────────────────────────────
+# Ollama base URL — required for AI summary endpoint (Phase 20)
+# Local: http://localhost:11434  |  Docker service: http://ollama:11434
+# If Ollama is unreachable the endpoint returns 503, no crash
+OLLAMA_BASE_URL=http://localhost:11434
+
+# At-risk threshold: students below this attendance rate are flagged
+AT_RISK_THRESHOLD=0.70
+
+# Consecutive absences threshold: triggers at-risk flag regardless of overall rate
+AT_RISK_CONSECUTIVE_ABSENCES=3
+
+# AI summary cache TTL in seconds (default 600 = 10 minutes)
+AI_SUMMARY_CACHE_TTL=600
 ```
 
 ---
@@ -369,41 +406,91 @@ RECOGNITION_FPS=2
 |---|---|---|
 | Temperature | > 28°C AND AC is in auto mode | Turn AC ON |
 | Temperature | < 22°C AND AC is in auto mode | Turn AC OFF |
-| Air quality | > 500 ppm | Send alert (no relay action — no ventilation relay wired) |
+| Air quality | > 500 ppm | Send alert |
 | Sound | Silent for > 30 min during active session | Send attendance anomaly alert |
 | Occupancy | headcount > recognized_faces + 2 | Flag discrepancy for professor |
+
+---
+
+## Insights System (Phase 19–22)
+
+### At-Risk Student Detection Logic
+A student is flagged as at-risk if either condition is true:
+1. Their attendance rate across all ended sessions for a course is below `AT_RISK_THRESHOLD` (default 70%)
+2. They have `AT_RISK_CONSECUTIVE_ABSENCES` (default 3) or more consecutive absences in any course
+
+Computed at query time by `insights_engine.get_at_risk_students()`. Not stored — always fresh. Professors see only students in their own courses. Admins see all.
+
+### Comfort Score Formula
+```
+comfort_score = 100
+  - max(0, temp - 26) * 5          # penalty above 26°C, -5 per degree
+  - max(0, 18 - temp) * 5          # penalty below 18°C
+  - max(0, humidity - 65) * 2      # penalty above 65% humidity
+  - max(0, (air_quality - 300) / 50)  # penalty above 300 ppm
+clamped to [0, 100]
+```
+
+### AI Summary Context Schema
+`ai_summary.py` builds a structured context blob and POSTs it to Ollama's `/api/chat` endpoint with model `phi3:mini`. The fixed system prompt instructs the model to produce a 3–5 sentence narrative identifying the most important finding and one concrete recommendation. If Ollama is unreachable, the endpoint returns HTTP 503 with a message indicating the expected URL — no crash. Results are cached in Redis per `(scope, id)` key for `AI_SUMMARY_CACHE_TTL` seconds.
+
+Context blob shape (JSON, passed as user message):
+```json
+{
+  "scope": "course",
+  "course_name": "CS301",
+  "period": "last 8 weeks",
+  "attendance_summary": { "avg_rate": 0.74, "trend": "declining", "sessions": 12 },
+  "at_risk_students": 3,
+  "env_summary": { "avg_temp": 28.4, "avg_air_quality": 420, "comfort_score": 62 },
+  "recent_alerts": ["temp_high x3", "air_quality_high x1"],
+  "anomalies": ["attendance dropped 22% in week 6", "3 sessions above 30°C"]
+}
+```
+
+### Export Format
+- **Session PDF**: cover (course, date, professor), attendance table (name, status, detected_at), sensor summary table (avg/min/max per type), AI narrative paragraph, alert log
+- **Course PDF**: cover, per-session attendance bar chart (rendered as ASCII table fallback if chart lib unavailable), per-student rate table with at-risk flag, AI narrative
+- **Course CSV**: raw rows — `session_date, student_name, student_id, status, detected_at, adjusted_by`
+
+PDF generation uses ReportLab's `Platypus` (Paragraph, Table, SimpleDocTemplate). No external font dependencies.
+
+### Mini-Cards on Existing Pages
+| Page | What is added |
+|---|---|
+| Dashboard | Comfort score pill (top of sensor strip) + "N students at risk" warning card if N > 0 |
+| Attendance | Risk badge (🔴/🟡) next to each student row; streak indicator "absent 3×" in subtitle |
+| History | Trend arrow (↑↓→) next to each session's attendance percentage |
+| Control | "AC ON for 2h, no occupancy detected" efficiency nudge card (from insights_engine) |
 
 ---
 
 ## Face Recognition Logic
 
 > Applies only when `FACE_RECOGNITION_ENABLED=true` (Raspberry Pi with DeepFace installed natively).
-> In Docker (default), the stub is active — see Stub Mode below.
 
-1. **Enrollment:** Upload up to 5 images → `face_recognition_service.enroll_student_face()` computes a 128-d Facenet encoding per image → averages them → stores as BYTEA in `face_encodings`
-2. **Recognition loop:** Run at 2fps (RPi CPU constraint) → detect all faces → compare each to all stored encodings using cosine distance → match if distance < 0.6 → return `student_id` or `UNKNOWN`
-3. **Attendance recording:** First match in a session → create `attendance_record` with status=`present` → 30s cooldown to prevent duplicate entries
-4. **UNKNOWN faces:** Increment occupancy counter but do not create attendance record → flag if count is high
+1. **Enrollment:** Upload up to 5 images → compute 128-d Facenet encoding → average → store as BYTEA float32
+2. **Recognition loop:** 2fps → detect faces → cosine distance < 0.6 → match → return `student_id` or `UNKNOWN`
+3. **Attendance recording:** First match per session → `attendance_record` status=`present` → 30s cooldown
+4. **UNKNOWN faces:** Increment occupancy counter → flag if high
 
 ### Stub Mode (`FACE_RECOGNITION_ENABLED=false`)
-
-- **Enrollment:** Stores a zeroed 128-d float32 placeholder vector — DB row is created, student can participate in mock events
-- **Recognition loop:** `_stub_recognition_loop` async task emits one synthetic attendance event every 45 seconds for a randomly chosen enrolled student in the active session; event shape is identical to real recognition so WebSocket and frontend need no changes
-- **`reload_encodings()`:** No-op — returns immediately without querying the DB
+- Enrollment: stores zeroed 128-d float32 placeholder
+- Recognition loop: emits one synthetic attendance event every 45s for a random enrolled student
+- `reload_encodings()`: no-op
 
 ---
 
 ## Mock Sensor Logic (MOCK_MODE=true)
 
-When `MOCK_MODE=true` in the environment, `mock_sensor.py` is registered as an APScheduler job at startup and publishes synthetic MQTT messages every 5 seconds to the same topics the ESP32 would use. Values drift realistically over time:
+`mock_sensor.py` publishes synthetic MQTT messages every 5s:
+- Temperature: 22–32°C sine wave + noise
+- Humidity: 45–70%
+- Air quality: 200–550 ppm, occasional spike above 500
+- Sound: 70% detected / 30% quiet
+- Heartbeat: every 30s
 
-- Temperature: oscillates between 22–32°C using a sine wave with small random noise
-- Humidity: oscillates between 45–70%
-- Air quality: drifts between 200–550 ppm, occasionally spiking above the 500 alert threshold
-- Sound: toggles randomly (weighted 70% detected, 30% quiet to simulate an active classroom)
-- Heartbeat (`classroom/room1/status`): published every 30s with `online: true`
-
-The frontend independently detects whether live WebSocket data is arriving. If no sensor message is received within 8 seconds of connecting, `useLiveSensors.js` activates a client-side mock generator and renders a `DemoModeBanner` component. This frontend fallback works even when the backend is unreachable.
+Frontend activates client-side demo mode if no WS sensor message within 8s.
 
 ---
 
@@ -422,14 +509,18 @@ The frontend independently detects whether live WebSocket data is arriving. If n
 | Phase 8 | React frontend | ✅ Complete |
 | Phase 9 | Integration testing + documentation | ✅ Complete |
 | Phase 10 | Full Docker deployment — frontend nginx, Mosquitto broker, service wiring | ✅ Complete |
-| Phase 11 | Mock data fallback — backend publisher + frontend demo mode | ✅ |
-| Phase 12 | Raspberry Pi setup runbook (docs/rpi_setup.md) | ✅ |
-| Phase 13 | Demo data seed script (backend/seed.py) | ✅ |
-| Phase 14 | JWT auth, professors table, role-based API filtering | ✅ |
-| Phase 15 | Docker image slim — DeepFace/TF removed; FACE_RECOGNITION_ENABLED stub; seed.py self-migrating | ✅ |
-| Phase 16 | Professor Dashboard — session list (live/upcoming/done) + attendance table + sensor cards/sparklines | ✅ |
-| Phase 17 | Dashboard bug fixes — total_enrolled from detail endpoint, key-based tab state reset, session count badges, MOCK_MODE enabled | ✅ |
-| Phase 18 | Full frontend visual redesign — CSS token system, DM Sans + Inter typography, blue sidebar, Soft Structuralism design language, all pages redesigned | ✅ |
+| Phase 11 | Mock data fallback — backend publisher + frontend demo mode | ✅ Complete |
+| Phase 12 | Raspberry Pi setup runbook (docs/rpi_setup.md) | ✅ Complete |
+| Phase 13 | Demo data seed script (backend/seed.py) | ✅ Complete |
+| Phase 14 | JWT auth, professors table, role-based API filtering | ✅ Complete |
+| Phase 15 | Docker image slim — DeepFace/TF removed; FACE_RECOGNITION_ENABLED stub; seed.py self-migrating | ✅ Complete |
+| Phase 16 | Professor Dashboard — session list (live/upcoming/done) + attendance table + sensor cards/sparklines | ✅ Complete |
+| Phase 17 | Dashboard bug fixes — total_enrolled, key-based tab reset, session count badges, MOCK_MODE enabled | ✅ Complete |
+| Phase 18 | Full frontend visual redesign — CSS token system, DM Sans + Inter, blue sidebar, Soft Structuralism | ✅ Complete |
+| Phase 19 | Insights backend — insights_engine.py, all analytics endpoints, at-risk logic, comfort score | ✅ |
+| Phase 20 | AI summaries — ai_summary.py, Ollama/phi3:mini via httpx, Redis caching, AiSummaryCard frontend | ✅ |
+| Phase 21 | Insights frontend — Insights.jsx page (3 tabs), all chart components, mini-cards on existing pages | ✅ |
+| Phase 22 | Export system — ReportLab PDF (session + course), CSV download, ExportButton component | ✅ |
 
 > **Update this table at the end of every phase.** Change ⬜ to ✅ when complete, 🔄 when in progress.
 
@@ -453,46 +544,54 @@ The frontend independently detects whether live WebSocket data is arriving. If n
 | publish_mqtt uses ephemeral client per call | MQTT subscriber loop cannot be reused for publishing — short-lived client is simplest safe pattern | Phase 5 |
 | AlertEngine uses AsyncIOScheduler | Runs on uvicorn event loop, no thread overhead, compatible with async DB calls | Phase 5 |
 | Alert deduplication via unacknowledged check | Prevents alert storms when threshold remains breached across multiple 30s check cycles | Phase 5 |
-| recognition_loop threads room_id through start_recognition | Phase 7 added room_id param so attendance events and anomaly alerts carry the correct room for WebSocket routing | Phase 7 |
+| recognition_loop threads room_id through start_recognition | Phase 7 added room_id param so attendance events and anomaly alerts carry correct room for WebSocket routing | Phase 7 |
 | Moodle sync is fire-and-forget on session end | Failing Moodle must not block a professor from ending a class | Phase 6 |
-| Redis retry queue for failed Moodle syncs | AlertEngine retries every 10 min via APScheduler — lightweight alternative to Celery for classroom scale | Phase 6 |
+| Redis retry queue for failed Moodle syncs | AlertEngine retries every 10 min via APScheduler | Phase 6 |
 | moodle_client uses lazy httpx.AsyncClient singleton | Avoids reconnecting on every sync call while remaining safe to close on shutdown | Phase 6 |
-| WebSocket state lifted to SensorContext | Single WS connection per browser tab shared across all pages via React context — avoids N connections for N pages | Phase 8 |
-| Dashboard shows live WS attendance; Attendance page fetches API | Live events (face recognitions) are ephemeral stream data; historical records need full CRUD — two different data needs, two sources | Phase 8 |
-| History expandable rows use React.Fragment with key | Bare <> fragments don't support key prop; Fragment import required for keyed sibling row pairs in a table body | Phase 8 |
-| Test suite uses SQLite in-memory with gen_random_uuid() shim | Avoids requiring PostgreSQL in CI; shim registered via SQLAlchemy event.listen maps PostgreSQL server_default to SQLite user function | Phase 9 |
-| e2e_test.py uses httpx sync client, not pytest | Script runs against a live server with python e2e_test.py — no pytest machinery required, simpler to run on the Pi itself | Phase 9 |
-| Migrated face_recognition → DeepFace | face_recognition/dlib requires native C++ compilation and cmake which fails on pip install; DeepFace is fully pip-installable with identical Facenet 128-d embedding functionality | Phase 3 fix |
-| face_encodings BYTEA dtype changed float64 → float32 | DeepFace Facenet outputs float32 vectors; both enrollment and reload_encodings must agree on dtype or cosine distance operates on garbage — all new enrollments store float32 | Phase 3 fix |
-| Frontend served via nginx container (port 3000) | Vite dev server proxy is dev-only; production build requires a static file server + reverse proxy for /api and /ws — nginx in a multi-stage Docker image is the standard pattern | Phase 10 |
-| Mosquitto added as a Docker service | Previously assumed to run on RPi host; for full-stack local Docker deployment it must be containerised — anonymous listener on port 1883, config mounted read-only | Phase 10 |
-| Moodle moved to optional Docker profile | bitnami/moodle:4.3 tag was retired; tag updated to bitnami/moodle:4; service gated behind --profile moodle so core stack starts without it | Phase 10 |
-| aiomqtt 2.x uses plain async iterator for client.messages | aiomqtt 2.x removed the async context manager protocol from MessagesIterator; `async with client.messages` must be `async for message in client.messages` — discovered at runtime during Docker deployment | Phase 10 |
-| Mock sensor uses APScheduler job (backend) | Reuses existing scheduler already running for alert_engine; no new dependency; activated only when MOCK_MODE=true at startup | Phase 11 |
-| Frontend fallback mock is client-side, independent of backend | WS timeout of 8s triggers in-browser value generator; dashboard remains demonstrable even when Docker stack is fully offline | Phase 11 |
-| RPi setup documented as docs/rpi_setup.md runbook | Single authoritative step-by-step guide covering OS, Docker, ESP32 flash, and verification commands — reduces setup errors during demo day | Phase 12 |
-| Seed script is idempotent standalone async script | Runs outside FastAPI lifecycle via direct engine instantiation; deterministic uuid.uuid5 IDs + ON CONFLICT DO NOTHING prevents duplicate runs | Phase 13 |
-| JWT stored in localStorage | Acceptable for university intranet without HTTPS; simpler than httpOnly cookies which require CORS credentials config | Phase 14 |
-| REQUIRE_AUTH defaults to false | Preserves backward compatibility with seed.py and e2e tests during auth rollout; set to true in production | Phase 14 |
-| DeepFace removed from Docker image | TensorFlow pulls ~600 MB wheel causing OOM during docker build on dev laptops; face recognition only runs on RPi natively; Docker image uses a stub service controlled by FACE_RECOGNITION_ENABLED=false | Phase 15 |
-| enrollment.py delegates all DeepFace calls to face_recognition_service | Keeps the router free of library-specific imports; stub/real switch is handled entirely inside the service layer without touching the API contract | Phase 15 |
-| seed.py calls _run_migrations() before asyncio.run() | seed.py bypasses FastAPI lifespan so alembic upgrade head never ran automatically; calling it synchronously before asyncio.run() avoids nested event loop errors and ensures schema exists before any INSERT | Phase 15 |
-| display_status computed at schema/response time, never stored | "Liveness" changes as time passes with no DB write; storing it would require a background job to flip rows. Computing it in _build_summary from (status, started_at, now) is always accurate and free | Phase 16 |
-| WebSocket wins for live sensor cards; polling is fallback only | useLiveSensors already owns the WS connection and exposes isDemoMode; the Dashboard watches isDemoMode to decide whether to prefer WS data or the 5-second DB-backed poll. No second WS connection needed | Phase 16 |
-| Sensor endpoints live in sessions.py, not sensors.py | URL path /api/sessions/{id}/sensors/... is mounted under the sessions router prefix; splitting by URL namespace is cleaner than by domain concept | Phase 16 |
-| Sparkline history stored in a useRef (accumulated) + useState (for renders) | Accumulating in state would trigger a re-render on every WS message; storing in ref and flushing only when a new value differs avoids thrashing while still updating the chart | Phase 16 |
-| AttendanceTab receives sessionId prop and fetches SessionDetailResponse internally | total_enrolled only exists on the detail endpoint response, not on the list-endpoint SessionWithSummary — passing the full session object from the list caused total_enrolled to always be undefined | Phase 17 |
-| key={session.id} on tab components forces full remount on session switch | More reliable than resetting individual useEffect states; React unmounts and remounts the component, guaranteeing clean slate without stale-data flash between sessions | Phase 17 |
-| MOCK_MODE=true set in docker-compose.yml | Development without ESP32 hardware needs mock MQTT publisher to populate sensor_readings table; otherwise sensors tab shows "No data" for all sessions | Phase 17 |
-| Session count badges added to left-panel group headers | 31 past sessions require scrolling; without a count indicator users assumed the panel was empty after the visible live/upcoming sessions | Phase 17 |
-| tokens.css as design token source of truth, separate from index.css | Tailwind v3 does not resolve CSS vars in arbitrary bracket values at build time; keeping tokens in a dedicated CSS file loaded before index.css lets component classes in index.css reference vars via `var(--color-*)` without Tailwind's build step | Phase 18 |
-| CSS class names preserved, visual output changed | Renaming `.glass-card` to `.card` would require touching every JSX file; changing the visual output of existing class names (removing backdrop-filter, updating colors) achieves the redesign with zero JSX churn | Phase 18 |
-| Glassmorphism removed entirely | backdrop-filter: blur() is expensive on the GPU, causes rendering artifacts in some Chromium versions, and undermines the "clean surfaces" design archetype chosen for this project | Phase 18 |
-| Inline SVG components instead of an icon library | No icon library is in package.json; installing one adds bundle weight and a new dependency; the 10–12 icons needed are simple enough to write inline as functional components | Phase 18 |
-| LineChart → AreaChart with linearGradient fill | AreaChart gives more visual weight to the sparkline while using identical Recharts data shape; linearGradient fill (opaque at top, transparent at bottom) communicates trend direction more clearly than a bare line | Phase 18 |
-| DemoRow uses imperative onMouseEnter/Leave for hover colors | CSS hover pseudo-class cannot reference CSS vars in Tailwind v3 utility classes; component-level JS event handlers are the escape hatch for token-based hover states that need `var(--color-*)` | Phase 18 |
-| `h-screen` kept on Layout root (not min-h-screen) | Dashboard panels use `h-full` which resolves to 100% of the nearest ancestor with a defined height; changing root to min-h-screen breaks the fixed-height two-panel layout | Phase 18 |
-| AttendanceBar renders proportional flex segments | Each status segment occupies `(count/total)*100%` width inside a `display:flex; overflow:hidden` container; overflow:hidden clips any sub-pixel rounding error that would otherwise overflow the 100% track | Phase 18 |
+| WebSocket state lifted to SensorContext | Single WS connection per browser tab shared across all pages | Phase 8 |
+| Dashboard shows live WS attendance; Attendance page fetches API | Live events are ephemeral; historical records need full CRUD | Phase 8 |
+| History expandable rows use React.Fragment with key | Bare <> fragments don't support key prop | Phase 8 |
+| Test suite uses SQLite in-memory with gen_random_uuid() shim | Avoids requiring PostgreSQL in CI | Phase 9 |
+| e2e_test.py uses httpx sync client, not pytest | Simpler to run on the Pi itself | Phase 9 |
+| Migrated face_recognition → DeepFace | dlib/cmake fails on pip install; DeepFace is fully pip-installable | Phase 3 fix |
+| face_encodings BYTEA dtype changed float64 → float32 | DeepFace Facenet outputs float32; dtype mismatch corrupts cosine distance | Phase 3 fix |
+| Frontend served via nginx container (port 3000) | Production build requires static file server + reverse proxy | Phase 10 |
+| Mosquitto added as a Docker service | Containerised for full-stack local Docker deployment | Phase 10 |
+| Moodle moved to optional Docker profile | bitnami/moodle:4.3 retired; gated behind --profile moodle | Phase 10 |
+| aiomqtt 2.x uses plain async iterator for client.messages | async with removed in 2.x; must use async for | Phase 10 |
+| Mock sensor uses APScheduler job (backend) | Reuses existing scheduler; activated only when MOCK_MODE=true | Phase 11 |
+| Frontend fallback mock is client-side, independent of backend | WS timeout of 8s triggers in-browser generator; works fully offline | Phase 11 |
+| RPi setup documented as docs/rpi_setup.md runbook | Reduces setup errors during demo day | Phase 12 |
+| Seed script is idempotent standalone async script | Deterministic uuid.uuid5 IDs + ON CONFLICT DO NOTHING | Phase 13 |
+| JWT stored in localStorage | Acceptable for university intranet without HTTPS | Phase 14 |
+| REQUIRE_AUTH defaults to false | Preserves backward compatibility with seed.py and e2e tests | Phase 14 |
+| DeepFace removed from Docker image | TF pulls ~600 MB; OOM on dev laptops; runs natively on RPi only | Phase 15 |
+| enrollment.py delegates all DeepFace calls to face_recognition_service | Stub/real switch handled entirely inside service layer | Phase 15 |
+| seed.py calls _run_migrations() before asyncio.run() | Avoids nested event loop errors; ensures schema before any INSERT | Phase 15 |
+| display_status computed at schema/response time, never stored | Liveness changes with time; storing requires a background job to flip rows | Phase 16 |
+| WebSocket wins for live sensor cards; polling is fallback only | useLiveSensors owns WS; Dashboard watches isDemoMode to choose source | Phase 16 |
+| Sensor endpoints live in sessions.py, not sensors.py | URL namespace cleaner than domain namespace | Phase 16 |
+| Sparkline history stored in useRef + useState | Accumulating in state thrashes renders; ref flushes only on value change | Phase 16 |
+| AttendanceTab receives sessionId prop and fetches detail internally | total_enrolled only on detail endpoint, not list-endpoint | Phase 17 |
+| key={session.id} on tab components forces full remount on switch | More reliable than resetting individual useEffect states | Phase 17 |
+| MOCK_MODE=true set in docker-compose.yml | Dev without ESP32 needs mock MQTT to populate sensor_readings | Phase 17 |
+| Session count badges added to left-panel group headers | 31 past sessions require scrolling; count prevents "empty panel" confusion | Phase 17 |
+| tokens.css as design token source, separate from index.css | Tailwind v3 does not resolve CSS vars in bracket values at build time | Phase 18 |
+| CSS class names preserved, visual output changed | Zero JSX churn while achieving full redesign | Phase 18 |
+| Glassmorphism removed entirely | backdrop-filter expensive on GPU, causes Chromium artifacts | Phase 18 |
+| Inline SVG components instead of icon library | 10–12 icons; no extra bundle weight | Phase 18 |
+| LineChart → AreaChart with linearGradient fill | More visual weight; communicates trend direction clearly | Phase 18 |
+| DemoRow uses imperative onMouseEnter/Leave for hover colors | CSS hover cannot reference CSS vars in Tailwind v3 | Phase 18 |
+| h-screen kept on Layout root | h-full on panels requires ancestor with defined height | Phase 18 |
+| AttendanceBar renders proportional flex segments | overflow:hidden clips sub-pixel rounding | Phase 18 |
+| At-risk computed at query time, never stored | Rate changes after every session; storing requires background job | Phase 19 |
+| Comfort score formula is purely arithmetic, no ML | Reproducible, explainable, zero inference latency | Phase 19 |
+| AI summary scoped to anomaly/alert context only | Avoids overly broad AI calls; focused narrative is more actionable | Phase 20 |
+| AI summary uses Ollama/phi3:mini via httpx | No Anthropic SDK dependency; httpx already in requirements; zero new packages; model is local and free | Phase 20 |
+| AI summary cached in Redis with 10-min TTL | Ollama inference on CPU takes 2–5s — unacceptable on every page load | Phase 20 |
+| OLLAMA_BASE_URL defaults to localhost:11434 | Works out-of-box for local Ollama; override to http://ollama:11434 when running Ollama as a Docker service | Phase 20 |
+| ReportLab chosen for PDF over WeasyPrint | ReportLab is pure Python, no system font/CSS dependencies; works in Docker without extra apt packages | Phase 22 |
+| CSV export is raw SQL result serialized via csv.DictWriter | No pandas dependency; lighter on the Pi | Phase 22 |
 
 ---
 
@@ -500,15 +599,17 @@ The frontend independently detects whether live WebSocket data is arriving. If n
 
 | Issue | Description | Workaround |
 |---|---|---|
-| Camera unavailable on dev machine | cv2.VideoCapture(0) fails on non-Pi systems; recognition loop exits immediately | Handled transparently — stub mode (`FACE_RECOGNITION_ENABLED=false`) replaces the loop with a synthetic event emitter; no camera needed in Docker |
-| MQ-135 not factory calibrated | Air quality readings are ADC counts, not true CO₂ ppm | Values are comparative — threshold of 500 is empirically set, not scientifically calibrated |
-| DeepFace not installed in Docker image | Face recognition is disabled in Docker by default (FACE_RECOGNITION_ENABLED=false); stub emits mock attendance events instead | Set FACE_RECOGNITION_ENABLED=true on RPi with DeepFace installed natively (see docs/rpi_setup.md §8) |
-| DeepFace inference speed on RPi | Facenet on CPU is slower than dlib on RPi 4 for the first load; subsequent frames run at ~2fps after model warm-up | Keep RECOGNITION_FPS=2; upgrade to RPi 5 for better throughput |
-| MQTT QoS 0 for sensors | A publish during broker restart will be lost | Dashboard simply shows stale data from Redis until next MQTT message arrives |
-| Moodle token scope | Moodle REST API requires a token with `core_user_get_users` and `gradereport_user_get_grade_items` permissions; wrong scope causes silent 200 with error body | Check Moodle webservice logs if sync shows `failed > 0` |
-| Single-room design | Room ID is hardcoded to `room1` in firmware config.h | Change `ROOM_ID` in `config.h` and `.env` to add a second room; multi-room requires separate ESP32 per room |
-| No HTTPS / WSS | Backend listens on plain HTTP; WebSocket is `ws://` not `wss://` | Add nginx reverse proxy with SSL termination for any public-facing deployment |
-| Dashboard live but no data (no ESP32) | Without a connected ESP32, MQTT has no publisher so Redis stays empty and WebSocket sends no sensor events | Set MOCK_MODE=true in .env and restart backend, or wait for frontend 8s timeout to trigger client-side demo mode |
+| Camera unavailable on dev machine | cv2.VideoCapture(0) fails on non-Pi systems | Stub mode active by default |
+| MQ-135 not factory calibrated | ADC counts, not true CO₂ ppm | Threshold of 500 is empirically set |
+| DeepFace not installed in Docker image | FACE_RECOGNITION_ENABLED=false by default | Set true on RPi with DeepFace natively installed |
+| DeepFace inference speed on RPi | ~2fps after warm-up | Keep RECOGNITION_FPS=2 |
+| MQTT QoS 0 for sensors | Publishes lost during broker restart | Dashboard shows stale Redis data until next message |
+| Moodle token scope | Wrong scope causes silent 200 with error body | Check Moodle webservice logs |
+| Single-room design | Room ID hardcoded to room1 | Change ROOM_ID in config.h and .env |
+| No HTTPS / WSS | Plain HTTP only | Add nginx SSL termination for public deployment |
+| Dashboard live but no data (no ESP32) | Redis empty without MQTT publisher | Set MOCK_MODE=true |
+| AI summary latency | Ollama/phi3:mini inference takes 2–5s on CPU | Cached in Redis for 10 min; AiSummaryCard shows skeleton loader on first request |
+| AI summary unavailable | 503 if Ollama is not running or unreachable | AiSummaryCard renders a clear "not reachable" message instead of crashing |
 
 ---
 
@@ -516,14 +617,15 @@ The frontend independently detects whether live WebSocket data is arriving. If n
 
 | Feature | Description |
 |---|---|
-| Multi-room support | Parametric room_id throughout; single backend instance manages N ESP32 nodes |
-| Mobile app | React Native app for professors to view attendance and control relays from their phone |
-| Better lighting for face recognition | IR illuminator module for low-light classrooms; automatic brightness compensation in OpenCV preprocessing |
-| Email / SMS notifications | Send alert emails via SMTP (or SMS via Twilio) when critical thresholds are breached |
-| Student self-enrollment QR codes | Generate QR code per student; scan to trigger face enrollment without professor intervention |
-| Attendance analytics dashboard | Per-student attendance rate charts, course-level trends, at-risk student flagging |
-| CO₂ sensor calibration | Replace MQ-135 proxy with calibrated SCD30 or MH-Z19 for true CO₂ ppm |
-| Offline resilience | Local SQLite fallback on RPi if Docker PostgreSQL container restarts; sync on reconnect |
+| Multi-room support | Parametric room_id throughout |
+| Mobile app | React Native for professors |
+| Better lighting for face recognition | IR illuminator module |
+| Email / SMS notifications | SMTP or Twilio for critical alerts |
+| Student self-enrollment QR codes | Scan to trigger face enrollment |
+| CO₂ sensor calibration | Replace MQ-135 with SCD30 or MH-Z19 |
+| Offline resilience | Local SQLite fallback on RPi |
+| Attendance analytics — scheduled email digest | Weekly at-risk report emailed to professors automatically |
+| Predictive at-risk model | Logistic regression trained on attendance + sensor data to predict dropout risk |
 
 ---
 

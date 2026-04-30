@@ -7,6 +7,7 @@ import Attendance from './pages/Attendance'
 import Control from './pages/Control'
 import Enrollment from './pages/Enrollment'
 import History from './pages/History'
+import Insights from './pages/Insights'
 
 function ProtectedRoute({ children }) {
   const { isAuthenticated } = useAuth()
@@ -36,6 +37,7 @@ export default function App() {
           <Route path="control"    element={<Control />} />
           <Route path="enrollment" element={<Enrollment />} />
           <Route path="history"    element={<History />} />
+          <Route path="insights"   element={<Insights />} />
         </Route>
         <Route path="*" element={<Navigate to="/dashboard" replace />} />
       </Routes>

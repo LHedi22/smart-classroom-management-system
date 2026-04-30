@@ -35,5 +35,10 @@ class Settings(BaseSettings):
     face_recognition_threshold: float = 0.6
     recognition_fps: int = 2
 
+    # AI summaries — Ollama (Phase 20)
+    ollama_base_url: str = "http://localhost:11434"
+    ollama_model: str = "phi3:latest"
+    ai_summary_cache_ttl: int = 600
+
 
 settings = Settings()

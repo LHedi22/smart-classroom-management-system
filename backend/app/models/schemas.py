@@ -261,3 +261,87 @@ class HealthResponse(BaseModel):
     status: str
     redis: bool
     db: bool
+
+
+# ── Insights (Phase 19) ───────────────────────────────────────────────────
+
+class InsightsOverview(BaseModel):
+    total_sessions: int
+    avg_attendance_rate: float
+    active_alerts_count: int
+    comfort_score: float
+    at_risk_count: int
+
+
+class AttendanceTrendPoint(BaseModel):
+    week_label: str
+    attendance_rate: float
+
+
+class HeatmapCell(BaseModel):
+    day_of_week: int
+    hour_slot: int
+    avg_rate: float
+
+
+class DecayPoint(BaseModel):
+    course_code: str
+    first_session_rate: float
+    last_session_rate: float
+    delta: float
+
+
+class AtRiskStudent(BaseModel):
+    student_id: str
+    name: str
+    institutional_id: str
+    attendance_rate: float
+    consecutive_absences: int
+    courses_at_risk: list[str]
+
+
+class CourseBreakdown(BaseModel):
+    course_code: str
+    sessions_attended: int
+    sessions_total: int
+    rate: float
+
+
+class RecentSessionEntry(BaseModel):
+    date: str
+    course_code: str
+    status: str
+
+
+class StudentProfile(BaseModel):
+    student_id: str
+    name: str
+    institutional_id: str
+    overall_attendance_rate: float
+    risk_level: str
+    per_course: list[CourseBreakdown]
+    recent_sessions: list[RecentSessionEntry]
+
+
+class EnvironmentTrendDay(BaseModel):
+    date: str
+    temp_avg: float | None = None
+    temp_min: float | None = None
+    temp_max: float | None = None
+    humidity_avg: float | None = None
+    air_quality_avg: float | None = None
+
+
+class AcEffectiveness(BaseModel):
+    avg_lag_minutes: float | None
+    sample_size: int
+
+
+class CorrelationPoint(BaseModel):
+    session_id: str
+    date: str
+    avg_temp: float | None = None
+    attendance_rate: float | None = None
+    course_code: str | None = None
+    avg_air_quality: float | None = None
+    pct_sound_detected: float | None = None

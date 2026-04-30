@@ -6,6 +6,7 @@ import { useSensor } from '../context/SensorContext'
 import DemoModeBanner from '../components/DemoModeBanner'
 import { getSessions, getSession } from '../api/sessions'
 import { getSessionSensorsLatest, getSessionSensorsSummary } from '../api/sensors'
+import client from '../api/client'
 
 // ── Sensor icon SVGs ──────────────────────────────────────────────────────
 
@@ -517,6 +518,12 @@ function DetailPanel({ session, sparkData }) {
 
 // ── Page ──────────────────────────────────────────────────────────────────
 
+function comfortColor(score) {
+  if (score >= 70) return 'var(--color-forest)'
+  if (score >= 40) return '#7A5B00'
+  return 'var(--color-red)'
+}
+
 export default function Dashboard() {
   const { sensors: wsSensors, isDemoMode, isConnected } = useSensor()
 
@@ -524,10 +531,15 @@ export default function Dashboard() {
   const [selectedId,  setSelectedId]  = useState(null)
   const [loadingSess, setLoadingSess] = useState(true)
   const [sessError,   setSessError]   = useState(null)
+  const [overview,    setOverview]    = useState(null)
 
   const sparkRef    = useRef({ temperature: [], humidity: [], air_quality: [], sound: [] })
   const [sparkData, setSparkData]   = useState(sparkRef.current)
   const lastPushedRef = useRef({})
+
+  useEffect(() => {
+    client.get('/insights/overview').then(r => setOverview(r.data)).catch(() => {})
+  }, [])
 
   useEffect(() => {
     setLoadingSess(true)
@@ -567,11 +579,46 @@ export default function Dashboard() {
   const done     = sessions.filter(s => s.display_status === 'done')
 
   return (
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', gap: 12 }}>
+    {/* Insights mini-strip */}
+    {overview && (
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+        {/* Comfort score pill */}
+        <div style={{
+          display: 'inline-flex', alignItems: 'center', gap: 8,
+          background: 'var(--color-surface)', border: '1px solid var(--color-border)',
+          borderRadius: 10, padding: '7px 14px', boxShadow: 'var(--shadow-card)', fontSize: 12,
+        }}>
+          <span style={{ color: 'var(--color-text-muted)', fontWeight: 600 }}>Comfort</span>
+          <span style={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 700, fontSize: 16, color: comfortColor(overview.comfort_score ?? 0) }}>
+            {overview.comfort_score ?? '—'}
+          </span>
+          <span style={{ color: 'var(--color-text-muted)' }}>/100</span>
+        </div>
+
+        {/* At-risk warning */}
+        {(overview.at_risk_count ?? 0) > 0 && (
+          <div style={{
+            display: 'inline-flex', alignItems: 'center', gap: 8,
+            background: 'rgba(236,0,68,0.06)', border: '1px solid rgba(236,0,68,0.20)',
+            borderRadius: 10, padding: '7px 14px', fontSize: 12, color: 'var(--color-red)', fontWeight: 500,
+          }}>
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+              <line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
+            </svg>
+            <span><strong>{overview.at_risk_count}</strong> students at risk across your courses.</span>
+            <a href="/insights" style={{ color: 'var(--color-red)', fontWeight: 700, textDecoration: 'underline' }}>View in Insights →</a>
+          </div>
+        )}
+      </div>
+    )}
     <div style={{
       display: 'grid',
       gridTemplateColumns: 'minmax(0, 320px) 1fr',
-      height: '100%',
+      flex: 1,
       gap: 16,
+      minHeight: 0,
     }}>
       {/* ── Session list ───────────────────────────────────────────── */}
       <aside style={{
@@ -640,6 +687,7 @@ export default function Dashboard() {
       }}>
         <DetailPanel session={selectedSession} sparkData={sparkData} />
       </section>
+    </div>
     </div>
   )
 }

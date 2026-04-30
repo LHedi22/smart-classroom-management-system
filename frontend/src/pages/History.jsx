@@ -1,5 +1,6 @@
 import { Fragment, useState, useEffect } from 'react'
 import client from '../api/client'
+import ExportButton from '../components/insights/ExportButton'
 
 function duration(start, end) {
   if (!start || !end) return '—'
@@ -96,6 +97,30 @@ const STATUS_CHIP = {
 }
 
 // ── Page ──────────────────────────────────────────────────────────────────
+
+function computeTrendArrow(sessions, sessionId) {
+  const s = sessions.find(x => x.id === sessionId)
+  if (!s || s.total_students == null || s.total_students === 0) return null
+  const courseCode = s.course?.code
+  if (!courseCode) return null
+
+  const sameCourse = sessions
+    .filter(x => x.course?.code === courseCode && x.total_students > 0)
+    .sort((a, b) => new Date(a.started_at) - new Date(b.started_at))
+
+  const idx = sameCourse.findIndex(x => x.id === sessionId)
+  if (idx <= 0) return null
+
+  const prev = sameCourse[idx - 1]
+  const curr = sameCourse[idx]
+  const currPct = curr.present_count / curr.total_students
+  const prevPct = prev.present_count / prev.total_students
+  const diff = currPct - prevPct
+
+  if (diff >= 0.05) return { symbol: '↑', color: 'var(--color-forest)', title: `+${Math.round(diff * 100)}pp vs prev session` }
+  if (diff <= -0.05) return { symbol: '↓', color: 'var(--color-red)', title: `${Math.round(diff * 100)}pp vs prev session` }
+  return { symbol: '→', color: 'var(--color-text-muted)', title: 'Stable vs prev session' }
+}
 
 export default function History() {
   const [sessions,   setSessions]   = useState([])
@@ -205,6 +230,7 @@ export default function History() {
                 const sync     = syncStatus[s.id]
                 const isExpanded = expandedId === s.id
                 const recs     = attendance[s.id] ?? []
+                const trend    = computeTrendArrow(filtered, s.id)
 
                 return (
                   <Fragment key={s.id}>
@@ -263,6 +289,11 @@ export default function History() {
                             <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--color-text-secondary)', width: 32, flexShrink: 0 }}>
                               {pct}%
                             </span>
+                            {trend && (
+                              <span title={trend.title} style={{ fontSize: 13, fontWeight: 700, color: trend.color, flexShrink: 0 }}>
+                                {trend.symbol}
+                              </span>
+                            )}
                           </div>
                         ) : (
                           <span style={{ color: 'var(--color-text-muted)' }}>—</span>
@@ -348,6 +379,9 @@ export default function History() {
                                     ))}
                                   </tbody>
                                 </table>
+                                <div style={{ marginTop: 14 }}>
+                                  <ExportButton type="session-pdf" id={s.id} label="Export PDF" />
+                                </div>
                               </>
                             )}
                           </div>

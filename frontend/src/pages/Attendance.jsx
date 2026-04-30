@@ -60,11 +60,22 @@ function EmptyChairSVG() {
 // ── Page ──────────────────────────────────────────────────────────────────
 
 export default function Attendance() {
-  const [sessions,   setSessions]   = useState([])
-  const [sessionId,  setSessionId]  = useState('')
-  const [records,    setRecords]    = useState([])
-  const [editingId,  setEditingId]  = useState(null)
-  const [loading,    setLoading]    = useState(false)
+  const [sessions,      setSessions]      = useState([])
+  const [sessionId,     setSessionId]     = useState('')
+  const [records,       setRecords]       = useState([])
+  const [editingId,     setEditingId]     = useState(null)
+  const [loading,       setLoading]       = useState(false)
+  const [atRiskMap,     setAtRiskMap]     = useState({}) // student_id → { attendance_rate, consecutive_absences }
+
+  useEffect(() => {
+    client.get('/insights/students/at-risk')
+      .then(r => {
+        const map = {}
+        r.data.forEach(s => { map[s.student_id] = s })
+        setAtRiskMap(map)
+      })
+      .catch(() => {})
+  }, [])
 
   useEffect(() => {
     client.get('/sessions').then(r => {
@@ -165,9 +176,27 @@ export default function Attendance() {
               </tr>
             </thead>
             <tbody>
-              {records.map(rec => (
+              {records.map(rec => {
+                const riskInfo = atRiskMap[rec.student_id]
+                const isAtRisk = !!riskInfo
+                return (
                 <tr key={rec.id} className="table-row">
-                  <td style={{ padding: '12px 16px', fontWeight: 600, color: 'var(--color-text-primary)' }}>{rec.student_name}</td>
+                  <td style={{ padding: '12px 16px', fontWeight: 600, color: 'var(--color-text-primary)' }}>
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}>
+                      {rec.student_name}
+                      {isAtRisk && (
+                        <span className="status-chip-danger" style={{ fontSize: 10, padding: '2px 7px' }}>At Risk</span>
+                      )}
+                      {!isAtRisk && riskInfo === undefined && (riskInfo?.consecutive_absences ?? 0) >= 2 && (
+                        <span className="status-chip-warning" style={{ fontSize: 10, padding: '2px 7px' }}>Watch</span>
+                      )}
+                    </span>
+                    {isAtRisk && (riskInfo.consecutive_absences ?? 0) >= 2 && (
+                      <span style={{ display: 'block', fontSize: 10, color: 'var(--color-text-muted)', fontWeight: 400, marginTop: 2 }}>
+                        absent {riskInfo.consecutive_absences}×
+                      </span>
+                    )}
+                  </td>
                   <td style={{ padding: '12px 16px', color: 'var(--color-text-muted)', fontFamily: 'monospace', fontSize: 12 }}>{rec.student_number}</td>
                   <td style={{ padding: '12px 16px' }}>
                     {editingId === rec.id ? (
@@ -200,7 +229,7 @@ export default function Attendance() {
                     )}
                   </td>
                 </tr>
-              ))}
+              )})}
             </tbody>
           </table>
         )}

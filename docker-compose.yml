@@ -91,6 +91,16 @@ services:
       - moodle_data:/bitnami/moodle
       - moodledata_data:/bitnami/moodledata
 
+  # ── Ollama (phi3:latest for AI summaries) ────────────────────────────────
+  ollama:
+    image: ollama/ollama:latest
+    container_name: smartcam-ollama
+    restart: unless-stopped
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+
   # ── FastAPI Backend ───────────────────────────────────────────────────────
   backend:
     build: ./backend
@@ -104,6 +114,8 @@ services:
       redis:
         condition: service_healthy
       mosquitto:
+        condition: service_started
+      ollama:
         condition: service_started
     environment:
       DATABASE_URL: postgresql+asyncpg://smartcam:smartcam@postgres:5432/smartclassroom
@@ -122,6 +134,8 @@ services:
       AIR_QUALITY_ALERT_THRESHOLD: "500"
       FACE_RECOGNITION_THRESHOLD: "0.6"
       RECOGNITION_FPS: "2"
+      OLLAMA_BASE_URL: "http://ollama:11434"
+      OLLAMA_MODEL: "phi3:latest"
 
   # ── React Frontend (nginx) ────────────────────────────────────────────────
   frontend:
@@ -140,3 +154,4 @@ volumes:
   mariadb_data:
   moodle_data:
   moodledata_data:
+  ollama_data:

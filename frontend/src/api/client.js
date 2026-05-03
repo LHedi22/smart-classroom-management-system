@@ -9,4 +9,18 @@ client.interceptors.request.use((config) => {
   return config
 })
 
+// On 401, the stored token is expired or invalid — clear it and redirect to login.
+client.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (error.response?.status === 401) {
+      localStorage.removeItem('sc_token')
+      if (!window.location.pathname.includes('/login')) {
+        window.location.href = '/login'
+      }
+    }
+    return Promise.reject(error)
+  }
+)
+
 export default client

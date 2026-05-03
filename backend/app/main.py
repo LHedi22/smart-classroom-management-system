@@ -7,7 +7,7 @@ from fastapi import FastAPI
 from app.config import settings
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import alerts, attendance, auth, control, courses, enrollment, insights, sensors, sessions, websocket
+from app.api import alerts, at_risk, attendance, auth, control, courses, enrollment, insights, sensors, sessions, websocket
 from app.models.schemas import HealthResponse, MoodleConnectionStatus
 from app.redis_client import close_redis, get_redis_pool
 from app.services.alert_engine import alert_engine
@@ -48,6 +48,10 @@ async def lifespan(app: FastAPI):
     if settings.mock_mode:
         from app.services.mock_sensor import start_mock_publisher
         start_mock_publisher(alert_engine._scheduler, settings.room_id)
+
+    from app.services.at_risk_engine import ensure_model_pulled
+    asyncio.create_task(ensure_model_pulled())
+
     broadcaster_tasks = [
         asyncio.create_task(_drain_queue(sensor_event_queue),    name="sensor_broadcaster"),
         asyncio.create_task(_drain_queue(attendance_event_queue), name="attendance_broadcaster"),
@@ -118,6 +122,7 @@ app.include_router(control.router,    prefix="/api/control",    tags=["control"]
 app.include_router(enrollment.router, prefix="/api",            tags=["enrollment"])
 app.include_router(alerts.router,     prefix="/api/alerts",     tags=["alerts"])
 app.include_router(insights.router,   prefix="/api/insights",   tags=["insights"])
+app.include_router(at_risk.router,    prefix="/api",            tags=["at-risk"])
 app.include_router(websocket.router,  prefix="/ws",             tags=["websocket"])
 
 

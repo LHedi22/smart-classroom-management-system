@@ -13,6 +13,7 @@ from sqlalchemy import (
     Text,
     text,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
 from sqlalchemy.types import DateTime
@@ -111,6 +112,9 @@ class Student(Base):
     )
     courses: Mapped[list["Course"]] = relationship(
         secondary=course_students, back_populates="students"
+    )
+    at_risk_explanation: Mapped["AtRiskExplanation | None"] = relationship(
+        back_populates="student", uselist=False, cascade="all, delete-orphan"
     )
 
 
@@ -231,3 +235,21 @@ class Alert(Base):
     created_at: Mapped[DateTime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
+
+
+class AtRiskExplanation(Base):
+    __tablename__ = "at_risk_explanations"
+
+    id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, server_default=text("gen_random_uuid()")
+    )
+    student_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("students.id", ondelete="CASCADE"), unique=True, nullable=False
+    )
+    overall_attendance_rate: Mapped[float] = mapped_column(Float, nullable=False)
+    summary_explanation: Mapped[str | None] = mapped_column(Text, nullable=True)
+    per_course_data: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    generated_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), nullable=False)
+    ollama_reachable: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+
+    student: Mapped["Student"] = relationship(back_populates="at_risk_explanation")

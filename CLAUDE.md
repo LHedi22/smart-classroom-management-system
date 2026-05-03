@@ -1,643 +1,249 @@
-# CLAUDE.md — Smart Classroom Management System
-# SMU – Mediterranean Institute of Technology
-# Team: Ben Jemaa · Jallouli · Saadaoui · Ouertani · Day
+Smart Classroom Management System — CLAUDE.md Summary
+Project Overview
+An IoT-based Smart Classroom Management System for SMU – Mediterranean Institute of Technology, built by a 5-person team. The system automates student attendance via face recognition, monitors classroom environment in real time, controls AC/lighting via relays, streams data to a professor-facing React dashboard, syncs attendance to Moodle, and identifies at-risk students using a local Ollama LLM (phi3-mini).
 
-> **This file is the single source of truth for this project.**
-> Read it at the start of every session. Update it whenever architecture, decisions, or progress change.
-> Never contradict what is written here without explicitly noting the change and the reason.
-
----
-
-## Project Summary
-
-An IoT-based Smart Classroom Management System for SMU that:
-- Automates student attendance tracking using face recognition (Raspberry Pi Camera + DeepFace/Facenet — RPi only; Docker uses a lightweight stub)
-- Monitors classroom environment in real time (temperature, humidity, air quality, sound)
-- Controls AC and lighting via relay module (automatic thresholds + manual override)
-- Streams all data to a professor-facing React dashboard over WebSocket
-- Syncs attendance to a local Docker Moodle instance via its REST API
-- **[NEW Phase 19–22]** Provides a full Insights system: at-risk student flagging, attendance × environment correlations, AI-generated anomaly summaries, and exportable PDF/CSV reports
-
----
-
-## Repository Structure
+Repository Structure
 smart-classroom/
-├── CLAUDE.md                        ← this file
-├── README.md
-├── docker-compose.yml               ← all services: postgres, redis, mosquitto, backend, frontend, moodle (profile)
-├── .env.example
-│
-├── mosquitto/
-│   └── mosquitto.conf               ← Mosquitto broker config (anonymous, port 1883)
-│
-├── firmware/                        ← ESP32 Arduino sketch
-│   └── classroom_node/
-│       ├── classroom_node.ino
-│       └── config.h
-│
-├── backend/                         ← Python FastAPI application
-│   ├── app/
-│   │   ├── main.py
-│   │   ├── config.py
-│   │   ├── database.py
-│   │   ├── redis_client.py
-│   │   ├── api/
-│   │   │   ├── sensors.py
-│   │   │   ├── attendance.py
-│   │   │   ├── control.py
-│   │   │   ├── sessions.py
-│   │   │   ├── alerts.py
-│   │   │   ├── enrollment.py
-│   │   │   ├── websocket.py
-│   │   │   └── insights.py          ← NEW Phase 19: all insights endpoints
-│   │   ├── services/
-│   │   │   ├── mqtt_bridge.py
-│   │   │   ├── face_recognition_service.py
-│   │   │   ├── recognition_loop.py
-│   │   │   ├── alert_engine.py
-│   │   │   ├── mock_sensor.py
-│   │   │   ├── moodle_client.py
-│   │   │   ├── insights_engine.py   ← NEW Phase 19: at-risk detection, comfort score, correlation queries
-│   │   │   └── ai_summary.py        ← NEW Phase 20: Ollama client — anomaly narrative generator; compact context serializer; num_predict cap; model via OLLAMA_MODEL env var
-│   │   └── models/
-│   │       ├── db_models.py         ← SQLAlchemy ORM
-│   │       └── schemas.py           ← Pydantic schemas (+ InsightResponse, AtRiskStudent, CorrelationPoint added Phase 19)
-│   ├── alembic/
-│   ├── alembic.ini
-│   ├── requirements.txt             ← reportlab added Phase 22; Phase 20 uses httpx (already present)
-│   ├── .dockerignore
-│   └── Dockerfile
-│
-├── frontend/                        ← React + Vite + Tailwind
-│   ├── src/
-│   │   ├── tokens.css
-│   │   ├── index.css
-│   │   ├── pages/
-│   │   │   ├── Dashboard.jsx        ← MODIFIED Phase 19: comfort score pill + at-risk mini-card
-│   │   │   ├── Attendance.jsx       ← MODIFIED Phase 19: per-student risk badge + streak indicator
-│   │   │   ├── Control.jsx
-│   │   │   ├── Enrollment.jsx
-│   │   │   ├── History.jsx          ← MODIFIED Phase 19: attendance trend arrow per session
-│   │   │   ├── Login.jsx
-│   │   │   └── Insights.jsx         ← NEW Phase 19: dedicated Insights page (3 tabs: Overview, Students, Environment)
-│   │   ├── components/
-│   │   │   ├── Layout.jsx           ← MODIFIED Phase 19: Insights nav item added to sidebar
-│   │   │   ├── DemoModeBanner.jsx
-│   │   │   └── insights/
-│   │   │       ├── KpiCards.jsx         ← NEW Phase 19: top-level KPI strip
-│   │   │       ├── AttendanceTrendChart.jsx  ← NEW Phase 19: AreaChart week-by-week per course
-│   │   │       ├── DayOfWeekHeatmap.jsx      ← NEW Phase 19: attendance heatmap grid
-│   │   │       ├── AtRiskTable.jsx           ← NEW Phase 19: flagged students list with drill-down
-│   │   │       ├── ComfortScoreCard.jsx      ← NEW Phase 19: composite 0–100 score card
-│   │   │       ├── SensorTrendChart.jsx      ← NEW Phase 19: multi-sensor AreaChart over session history
-│   │   │       ├── CorrelationScatter.jsx    ← NEW Phase 19: temp vs attendance scatter
-│   │   │       ├── AiSummaryCard.jsx         ← NEW Phase 20: AI narrative card with loading skeleton
-│   │   │       └── ExportButton.jsx          ← NEW Phase 22: PDF/CSV export trigger
-│   │   ├── hooks/
-│   │   │   ├── useLiveSensors.js
-│   │   │   └── useInsights.js       ← NEW Phase 19: fetches all insights endpoints, exposes loading/error states
-│   │   └── api/
-│   │       └── client.js
-│   ├── package.json
-│   ├── vite.config.js
-│   ├── nginx.conf
-│   ├── .dockerignore
-│   └── Dockerfile
-│
-└── docs/
-    ├── mqtt_schema.md
-    ├── api_contracts.md
-    ├── wiring_diagram.md
-    └── rpi_setup.md
+├── docker-compose.yml         # postgres, redis, mosquitto, backend, frontend, ollama, moodle (optional profile)
+├── mosquitto/mosquitto.conf
+├── firmware/classroom_node/   # ESP32 Arduino sketch (classroom_node.ino + config.h)
+├── backend/app/
+│   ├── main.py, config.py, database.py, redis_client.py
+│   ├── api/        → sensors, attendance, control, sessions, alerts, enrollment, at_risk, websocket
+│   ├── services/   → mqtt_bridge, face_recognition_service, recognition_loop, alert_engine,
+│   │                  mock_sensor, moodle_client, at_risk_engine
+│   └── models/     → db_models.py (SQLAlchemy ORM), schemas.py (Pydantic)
+├── frontend/src/
+│   ├── tokens.css             # CSS design token source of truth
+│   ├── index.css              # all component classes; references token vars only
+│   ├── pages/  → Dashboard, Attendance, Control, Enrollment, History, AtRisk, Login
+│   ├── components/ → Layout (240px blue sidebar), DemoModeBanner
+│   ├── hooks/useLiveSensors.js
+│   └── api/client.js
+└── docs/ → mqtt_schema, api_contracts, wiring_diagram, rpi_setup.md
 
----
+Hardware
+ComponentModelRoleSBCRaspberry Pi 4B 4GBCentral hub, runs all servicesCameraRPi Camera Module v2 8MPFace recognition inputMCUESP32 Dev Board (ESP-WROOM-32)Sensor node + relay controllerTemp/HumidityDHT21 (AM2301)Environmental monitoringAir QualityMQ-135CO₂/VOC proxySoundACP014Occupancy proxy, noise levelRelay4-Channel Opto-IsolatedAC (ch1), Lighting (ch2), spare (ch3/4)DisplayLCD 16×2 I2CLocal room statusVoltage ConverterLogic Level 3.3V↔5VESP32 ↔ Relay safe commsPowerUSB-C 5V 3ARPi supply
+ESP32 ↔ RPi communication: WiFi + MQTT (Mosquitto broker on RPi)
 
-## Hardware
+Tech Stack
+Firmware (ESP32)
 
-| Component | Model | Role |
-|---|---|---|
-| Single-board computer | Raspberry Pi 4 Model B 4GB | Central hub, runs all backend services |
-| Camera | Raspberry Pi Camera Module v2 8MP | Face recognition input |
-| Microcontroller | ESP32 Dev Board (ESP-WROOM-32) | Sensor node + relay controller |
-| Temp/Humidity | DHT21 (AM2301) | Environmental monitoring |
-| Air quality | MQ-135 | CO2/VOC proxy reading |
-| Sound | ACP014 | Occupancy proxy, noise level |
-| Relay | 4-Channel Opto-Isolated | AC control (ch1), Lighting (ch2), spare (ch3, ch4) |
-| Display | LCD 16x2 I2C | Local room status display |
-| Voltage converter | Logic Level Converter 3.3V↔5V | ESP32 ↔ Relay safe communication |
-| Power | USB-C 5V 3A | Raspberry Pi power supply |
+Arduino IDE, C++
+Libraries: PubSubClient (MQTT), DHT, LiquidCrystal_I2C, WiFi.h
 
-**Communication between ESP32 and Raspberry Pi:** WiFi + MQTT (Mosquitto broker on RPi)
+Backend (RPi — Python 3.11)
 
----
+FastAPI (async) + Uvicorn
+SQLAlchemy 2.0 (async) + Alembic migrations
+PostgreSQL 15 (DB), Redis 7 (cache)
+aiomqtt 2.x (MQTT bridge)
+DeepFace (Facenet, 128-d) + opencv-python-headless — RPi only; Docker uses stub
+APScheduler (alert engine, mock sensor, periodic jobs)
+httpx (Moodle + Ollama REST client)
+Ollama → phi3-mini LLM (local, no API key)
 
-## Tech Stack
+Frontend (React 18 + Vite)
 
-### Firmware (ESP32)
-- Arduino IDE
-- Libraries: `PubSubClient` (MQTT), `DHT` (sensor), `LiquidCrystal_I2C` (LCD), `WiFi.h`
-- Language: C++ (Arduino)
+TailwindCSS v3 + CSS custom properties (tokens.css)
+DM Sans (headings 600/700) + Inter (body 400/500)
+Recharts — AreaChart + linearGradient sparklines
+Native WebSocket via custom hook
+axios HTTP client
 
-### Backend (Raspberry Pi)
-- **Runtime:** Python 3.11
-- **Framework:** FastAPI (async) + Uvicorn
-- **ORM:** SQLAlchemy 2.0 (async) + Alembic migrations
-- **Database:** PostgreSQL 15
-- **Cache:** Redis 7
-- **MQTT:** aiomqtt 2.x (bridge between Mosquitto and FastAPI)
-- **Face recognition:** DeepFace (Facenet model) + opencv-python-headless — installed natively on RPi only; Docker image runs a stub (`FACE_RECOGNITION_ENABLED=false`)
-- **Scheduler:** APScheduler (alert engine, periodic jobs + mock sensor when MOCK_MODE=true)
-- **Moodle integration:** httpx (async HTTP client)
-- **[NEW Phase 20] AI summaries:** httpx → Ollama REST API (`/api/chat`) — model configurable via `OLLAMA_MODEL` (default `phi3:latest`); no new dependencies; context serialised as compact plain-text sentences (not raw JSON) for small-model compatibility; `num_predict: 120` token cap prevents CPU timeout; URL configured via `OLLAMA_BASE_URL`
-- **[NEW Phase 22] PDF export:** ReportLab — server-side PDF generation for session and course reports
+Infrastructure (Docker Compose)
+ServiceImagePortPostgreSQL 15postgres:15—Redis 7redis:7—Mosquitto 2eclipse-mosquitto:21883Backendcustom8000Frontend (nginx)custom3000Ollamaollama/ollama:latest11434Moodle 4.x (optional)bitnami/moodle:48080
+Docker Quick Start
+bashdocker compose up -d                              # full stack
+MOCK_MODE=true docker compose up -d              # without ESP32
+docker compose --profile moodle up -d            # with Moodle
+docker compose exec backend python seed.py        # seed 35 students, 6 courses, 30 sessions, 5 professors
+# Manual at-risk pipeline trigger:
+docker compose exec backend python -c "import asyncio; from app.services.at_risk_engine import run_at_risk_pipeline; asyncio.run(run_at_risk_pipeline())"
+URLServicehttp://localhost:3000React dashboardhttp://localhost:8000/docsFastAPI Swagger UIhttp://localhost:8000/healthHealth checkhttp://localhost:1883Mosquitto MQTThttp://localhost:11434Ollama LLM APIhttp://localhost:8080Moodle (optional)
 
-### Frontend
-- **Framework:** React 18 + Vite
-- **Styling:** TailwindCSS v3 + CSS custom properties design token system (`tokens.css`)
-- **Typography:** DM Sans (headings, 600/700) + Inter (body, 400/500) via Google Fonts
-- **Charts:** Recharts (`AreaChart`, `ScatterChart`, `linearGradient` fill)
-- **Real-time:** Native WebSocket via custom hook
-- **HTTP client:** axios
-- **Design system:** `tokens.css` — single source of truth for all colors, shadows, and type scale
+MQTT Topic Schema
+Pattern: classroom/{room_id}/... (default: room1)
+TopicDirectionPayload.../sensors/temperatureESP32 → RPi{"value":24.5,"unit":"C","ts":...} every 5s.../sensors/humidityESP32 → RPi{"value":62.1,"unit":"%","ts":...} every 5s.../sensors/air_qualityESP32 → RPi{"value":320,"unit":"ppm","ts":...}.../sensors/soundESP32 → RPi{"value":1,"unit":"bool","ts":...} (1=detected).../relay/acRPi → ESP32{"action":"on|off|auto"}.../relay/lightingRPi → ESP32{"action":"on|off|auto"}.../statusESP32 → RPi{"online":true,"ts":...} every 30s.../alertsRPi → ESP32{"type":"temp_high","value":36} → LCD
 
-### Infrastructure
-- **MQTT Broker:** Mosquitto 2 (Docker)
-- **Database:** PostgreSQL 15 (Docker)
-- **Cache:** Redis 7 (Docker)
-- **Frontend server:** nginx (Docker)
-- **LMS:** Moodle 4.x (Docker — optional, `--profile moodle`)
-- **Container orchestration:** Docker Compose
+Database Schema
+professors
+id (UUID PK), name, email (UNIQUE), hashed_password (bcrypt), role (ENUM: professor|admin), created_at
+students
+id (UUID PK), name, student_id (UNIQUE institutional), created_at
+courses
+id (UUID PK), code (UNIQUE), professor_id (FK→professors, nullable), name, professor_name
+sessions
+id (UUID PK), course_id (FK), room_id, started_at, ended_at (nullable), status (ENUM: active|ended|upcoming)
+display_status — computed, not stored: live = active + started_at ≤ now | upcoming = status==upcoming | done = ended
+attendance_records
+id (UUID PK), session_id (FK), student_id (FK), status (ENUM: present|absent|late|excused), detected_at, adjusted_by (nullable), adjusted_at (nullable), moodle_synced (BOOL default false)
+face_encodings
+id (UUID PK), student_id (FK), encoding (BYTEA — serialized 128-d float32 numpy array), created_at
+sensor_readings
+id (UUID PK), room_id, sensor_type (ENUM: temperature|humidity|air_quality|sound), value (FLOAT), unit, recorded_at
+alerts
+id (UUID PK), room_id, type (ENUM: temp_high|temp_low|air_quality_high|attendance_anomaly|device_offline), value (FLOAT nullable), message (TEXT), acknowledged (BOOL default false), created_at
+at_risk_explanations (Phase 19)
+id (UUID PK), student_id (FK → students ON DELETE CASCADE), overall_attendance_rate (FLOAT), summary_explanation (TEXT — LLM narrative), per_course_data (JSONB — array of per-course stats + explanation), generated_at (TIMESTAMP), ollama_reachable (BOOL)
+Index: UNIQUE on student_id; upserted on every pipeline run.
 
-### Docker Quick Start
-```bash
-# Start everything (dashboard available at http://localhost:3000)
-docker compose up -d
+API Endpoints
+Sensors
 
-# Start with mock sensor data (no ESP32 needed)
-MOCK_MODE=true docker compose up -d
+GET /api/sensors/latest — latest from Redis
+GET /api/sensors/history?room_id&type&from&to
+GET /api/sessions/{id}/sensors/latest — per-type within session window
+GET /api/sessions/{id}/sensors/summary — avg/min/max (HTTP 400 if session not ended)
 
-# With Moodle LMS (adds ~5 min init time)
-docker compose --profile moodle up -d
+Sessions
 
-# Rebuild after code changes
-docker compose build && docker compose up -d
+POST /api/sessions/start — {course_id, room_id}
+POST /api/sessions/{id}/end
+GET /api/sessions (filtered list)
+GET /api/sessions/{id}
 
-# Seed demo data (35 students, 6 courses, 30 sessions, 5 professor accounts)
-docker compose exec backend python seed.py
-```
+Control
 
-| URL | Service |
-|---|---|
-| http://localhost:3000 | React dashboard (main entry point) |
-| http://localhost:8000/docs | FastAPI Swagger UI |
-| http://localhost:8000/health | Backend health check |
-| http://localhost:1883 | Mosquitto MQTT (for ESP32) |
-| http://localhost:8080 | Moodle LMS (if `--profile moodle`) |
+POST /api/control/ac — {room_id, action: on|off|auto} → MQTT + Redis
+POST /api/control/lighting — same pattern
+GET /api/control/status/{room_id} — relay states + live sensors + device_online
 
----
+Alerts
 
-## MQTT Topic Schema
+GET /api/alerts?room_id&acknowledged&limit=50
+PATCH /api/alerts/{id}/acknowledge
+GET /api/alerts/unread-count/{room_id}
 
-All topics follow the pattern: `classroom/{room_id}/...`
-Default room_id for this project: `room1`
+Courses
 
-| Topic | Direction | Payload | Description |
-|---|---|---|---|
-| `classroom/room1/sensors/temperature` | ESP32 → RPi | `{"value": 24.5, "unit": "C", "ts": 1234567890}` | Published every 5s |
-| `classroom/room1/sensors/humidity` | ESP32 → RPi | `{"value": 62.1, "unit": "%", "ts": ...}` | Published every 5s |
-| `classroom/room1/sensors/air_quality` | ESP32 → RPi | `{"value": 320, "unit": "ppm", "ts": ...}` | MQ135 raw ADC value |
-| `classroom/room1/sensors/sound` | ESP32 → RPi | `{"value": 1, "unit": "bool", "ts": ...}` | 1=sound detected, 0=quiet |
-| `classroom/room1/relay/ac` | RPi → ESP32 | `{"action": "on"}` | on / off / auto |
-| `classroom/room1/relay/lighting` | RPi → ESP32 | `{"action": "off"}` | on / off / auto |
-| `classroom/room1/status` | ESP32 → RPi | `{"online": true, "ts": ...}` | Heartbeat every 30s |
-| `classroom/room1/alerts` | RPi → ESP32 | `{"type": "temp_high", "value": 36}` | Push alerts to LCD |
+GET /api/courses, POST /api/courses, GET /api/courses/{id}
+POST /api/courses/{id}/enroll — {student_ids: [...]}
 
----
+Attendance
 
-## Database Schema
+GET /api/sessions/{id}/attendance
+PATCH /api/attendance/{record_id} — manual adjustment
+POST /api/sessions/{id}/mark-absent — bulk absent fill
+GET /api/students/{id}/attendance-history
 
-### Tables
+Enrollment
 
-**professors**
-- id (UUID PK)
-- name (VARCHAR)
-- email (VARCHAR UNIQUE)
-- hashed_password (VARCHAR) — bcrypt
-- role (ENUM: professor, admin)
-- created_at (TIMESTAMP)
+GET /api/students, POST /api/students
+POST /api/students/{id}/enroll-face — upload image → compute encoding
+GET /api/students/{id}/courses
 
-**students**
-- id (UUID PK)
-- name (VARCHAR)
-- student_id (VARCHAR UNIQUE) — institutional ID
-- created_at (TIMESTAMP)
+At-Risk (Phase 19)
 
-**courses**
-- id (UUID PK)
-- code (VARCHAR UNIQUE) — e.g. "CS301"
-- professor_id (UUID FK → professors.id, nullable, ON DELETE SET NULL) — added Phase 14
-- name (VARCHAR)
-- professor_name (VARCHAR)
+GET /api/at-risk — list at-risk students (< 70%) with latest explanation; professor-filtered by course; ?course_id= param
+GET /api/at-risk/{student_id} — full summary + per-course breakdown
+POST /api/at-risk/recompute — admin only; fires pipeline, returns 202
 
-**sessions**
-- id (UUID PK)
-- course_id (FK → courses)
-- room_id (VARCHAR) — e.g. "room1"
-- started_at (TIMESTAMP)
-- ended_at (TIMESTAMP NULLABLE)
-- status (ENUM: active, ended, upcoming)
-- display_status (computed, NOT stored): `live` | `upcoming` | `done`
+WebSocket
 
-**attendance_records**
-- id (UUID PK)
-- session_id (FK → sessions)
-- student_id (FK → students)
-- status (ENUM: present, absent, late, excused)
-- detected_at (TIMESTAMP)
-- adjusted_by (VARCHAR NULLABLE)
-- adjusted_at (TIMESTAMP NULLABLE)
-- moodle_synced (BOOLEAN DEFAULT false)
+WS /ws/classroom/{room_id} — streams sensor updates, attendance events, alerts
 
-**face_encodings**
-- id (UUID PK)
-- student_id (FK → students)
-- encoding (BYTEA) — serialized numpy array (128-d vector, float32)
-- created_at (TIMESTAMP)
 
-**sensor_readings**
-- id (UUID PK)
-- room_id (VARCHAR)
-- sensor_type (ENUM: temperature, humidity, air_quality, sound)
-- value (FLOAT)
-- unit (VARCHAR)
-- recorded_at (TIMESTAMP)
-
-**alerts**
-- id (UUID PK)
-- room_id (VARCHAR)
-- type (ENUM: temp_high, temp_low, air_quality_high, attendance_anomaly, device_offline)
-- value (FLOAT NULLABLE)
-- message (TEXT)
-- acknowledged (BOOLEAN DEFAULT false)
-- created_at (TIMESTAMP)
-
----
-
-## API Endpoints
-
-### Sensors
-- `GET /api/sensors/latest`
-- `GET /api/sensors/history` — params: `room_id`, `type`, `from`, `to`
-- `GET /api/sessions/{id}/sensors/latest`
-- `GET /api/sessions/{id}/sensors/summary`
-
-### Sessions
-- `POST /api/sessions/start`
-- `POST /api/sessions/{id}/end`
-- `GET /api/sessions`
-- `GET /api/sessions/{id}`
-
-### Control
-- `POST /api/control/ac`
-- `POST /api/control/lighting`
-- `GET /api/control/status/{room_id}`
-
-### Alerts
-- `GET /api/alerts`
-- `PATCH /api/alerts/{id}/acknowledge`
-- `GET /api/alerts/unread-count/{room_id}`
-
-### Courses
-- `GET /api/courses`
-- `POST /api/courses`
-- `GET /api/courses/{id}`
-- `POST /api/courses/{id}/enroll`
-
-### Attendance
-- `GET /api/sessions/{id}/attendance`
-- `PATCH /api/attendance/{record_id}`
-- `POST /api/sessions/{id}/mark-absent`
-- `GET /api/students/{id}/attendance-history`
-
-### Enrollment
-- `GET /api/students`
-- `POST /api/students`
-- `POST /api/students/{id}/enroll-face`
-- `GET /api/students/{id}/courses`
-
-### WebSocket
-- `WS /ws/classroom/{room_id}`
-
-### Insights (NEW — Phase 19–22)
-- `GET /api/insights/overview` — KPI summary: total sessions, avg attendance rate, comfort score trend, active alert count; scoped by `professor_id` for professors, all courses for admin
-- `GET /api/insights/attendance/trend` — params: `course_id` (optional), `weeks=8`; returns week-by-week attendance rate array for AreaChart
-- `GET /api/insights/attendance/heatmap` — returns a 7×N matrix (day-of-week × time-slot) of avg attendance rates
-- `GET /api/insights/attendance/decay` — first-session vs last-session attendance rate per course; detects semester drift
-- `GET /api/insights/students/at-risk` — list of students below `threshold` (default 70%) with: name, student_id, attendance_rate, consecutive_absences, courses_at_risk[]; professor sees only their courses, admin sees all
-- `GET /api/insights/students/{id}/profile` — full per-student insight: attendance history across all sessions, trend, risk level, course breakdown
-- `GET /api/insights/environment/comfort-score` — composite 0–100 score from latest temp/humidity/air_quality readings for a room
-- `GET /api/insights/environment/trends` — params: `room_id`, `from`, `to`; avg/min/max per sensor type per day; returns array for multi-sensor AreaChart
-- `GET /api/insights/environment/ac-effectiveness` — per-session: time between AC ON and temp drop below threshold; returns avg lag in minutes
-- `GET /api/insights/correlations/temp-vs-attendance` — scatter data: each point = one session, x=avg_temp, y=attendance_rate
-- `GET /api/insights/correlations/airquality-vs-sound` — scatter: x=avg_air_quality, y=pct_time_sound_detected per session
-- `GET /api/insights/ai-summary` — params: `scope` (session|course|room|global), `id`; builds compact plain-text prompt and calls Ollama `/api/chat` with model from `OLLAMA_MODEL`; returns `{narrative: str, generated_at: datetime}`; cached in Redis for 10 min per (scope, id); 503 if Ollama unreachable or model error
-- `GET /api/insights/export/session/{id}` — returns PDF binary (ReportLab); attendance list + sensor summary + AI narrative
-- `GET /api/insights/export/course/{id}` — returns PDF; all sessions, per-student rates, at-risk flags
-- `GET /api/insights/export/course/{id}/csv` — returns CSV of raw attendance records for the course
-
----
-
-## Environment Variables (.env)
-
-```env
-# ── Database ──────────────────────────────────────────────────────────────
-DATABASE_URL=postgresql+asyncpg://smartcam:smartcam@postgres:5432/smartclassroom
-
-# ── Redis ─────────────────────────────────────────────────────────────────
+Environment Variables
+envDATABASE_URL=postgresql+asyncpg://smartcam:smartcam@postgres:5432/smartclassroom
 REDIS_URL=redis://redis:6379
-
-# ── MQTT ──────────────────────────────────────────────────────────────────
 MQTT_BROKER_HOST=mosquitto
 MQTT_BROKER_PORT=1883
-
-# ── Moodle ────────────────────────────────────────────────────────────────
 MOODLE_URL=http://localhost:8080
 MOODLE_TOKEN=your_moodle_token_here
-
-# ── Application ───────────────────────────────────────────────────────────
+OLLAMA_BASE_URL=http://ollama:11434
+OLLAMA_MODEL=phi3:mini
 SECRET_KEY=changeme-use-a-long-random-string-in-production
 ROOM_ID=room1
-
-MOCK_MODE=false
-FACE_RECOGNITION_ENABLED=false
-
-# ── Auth ──────────────────────────────────────────────────────────────────
+MOCK_MODE=false                      # true = fake sensor MQTT without ESP32
+FACE_RECOGNITION_ENABLED=false       # true only on RPi with DeepFace installed
 ACCESS_TOKEN_EXPIRE_MINUTES=480
-REQUIRE_AUTH=false
-
-# ── Auto-control thresholds ───────────────────────────────────────────────
+REQUIRE_AUTH=false                   # set true in production
 TEMP_AC_ON_THRESHOLD=28
 TEMP_AC_OFF_THRESHOLD=22
 AIR_QUALITY_ALERT_THRESHOLD=500
 FACE_RECOGNITION_THRESHOLD=0.6
 RECOGNITION_FPS=2
-
-# ── Insights (NEW Phase 19–22) ────────────────────────────────────────────
-# Ollama base URL — required for AI summary endpoint (Phase 20)
-# Local: http://localhost:11434  |  Docker service: http://ollama:11434
-# If Ollama is unreachable the endpoint returns 503, no crash
-OLLAMA_BASE_URL=http://localhost:11434
-
-# At-risk threshold: students below this attendance rate are flagged
 AT_RISK_THRESHOLD=0.70
 
-# Consecutive absences threshold: triggers at-risk flag regardless of overall rate
-AT_RISK_CONSECUTIVE_ABSENCES=3
+Auto-Control Rules
+SensorConditionActionTemperature> 28°C + AC in auto modeTurn AC ONTemperature< 22°C + AC in auto modeTurn AC OFFAir quality> 500 ppmSend alert (no relay — no ventilation wired)SoundSilent > 30 min in active sessionSend attendance anomaly alertOccupancyheadcount > recognized_faces + 2Flag discrepancy for professor
 
-# Ollama model name — must match exactly what `ollama list` shows (e.g. phi3:latest, llama3.2:1b)
-OLLAMA_MODEL=phi3:latest
+Face Recognition Logic
+Enrollment: Up to 5 images → Facenet 128-d encoding per image → averaged → stored as float32 BYTEA.
+Recognition loop (2fps on RPi): Detect faces → cosine distance against all stored encodings → match if < 0.6 → return student_id or UNKNOWN.
+Attendance recording: First match per session → create attendance_record (status=present) → 30s cooldown to prevent duplicates. UNKNOWN faces increment occupancy counter.
+Stub Mode (FACE_RECOGNITION_ENABLED=false)
 
-# AI summary cache TTL in seconds (default 600 = 10 minutes)
-AI_SUMMARY_CACHE_TTL=600
-```
+Enrollment stores zeroed 128-d float32 placeholder.
+_stub_recognition_loop emits one synthetic attendance event every 45s for a random enrolled student.
+reload_encodings() is a no-op.
 
----
 
-## Auto-Control Rules
+Mock Sensor Logic (MOCK_MODE=true)
+APScheduler job publishes MQTT every 5s:
 
-| Sensor | Condition | Action |
-|---|---|---|
-| Temperature | > 28°C AND AC is in auto mode | Turn AC ON |
-| Temperature | < 22°C AND AC is in auto mode | Turn AC OFF |
-| Air quality | > 500 ppm | Send alert |
-| Sound | Silent for > 30 min during active session | Send attendance anomaly alert |
-| Occupancy | headcount > recognized_faces + 2 | Flag discrepancy for professor |
+Temperature: 22–32°C (sine wave + noise)
+Humidity: 45–70%
+Air quality: 200–550 ppm (occasional spike above 500 threshold)
+Sound: 70% detected / 30% quiet
+Heartbeat: every 30s
 
----
+Frontend fallback: If no WS sensor data within 8s of connecting, useLiveSensors.js activates client-side mock generator + renders DemoModeBanner. Works even when backend is fully offline.
 
-## Insights System (Phase 19–22)
+At-Risk Explanation Pipeline (Phases 19 & 20)
+Trigger
+Fired on-demand when GET /api/at-risk is called → asyncio.create_task(run_at_risk_pipeline()). Redis lock at_risk:pipeline:lock (TTL 600s, not deleted on completion) prevents concurrent runs and enforces ~10-min cooldown between invocations.
+Pipeline Steps
 
-### At-Risk Student Detection Logic
-A student is flagged as at-risk if either condition is true:
-1. Their attendance rate across all ended sessions for a course is below `AT_RISK_THRESHOLD` (default 70%)
-2. They have `AT_RISK_CONSECUTIVE_ABSENCES` (default 3) or more consecutive absences in any course
+Identify at-risk students only — query students below AT_RISK_THRESHOLD (avoids iterating all 35+)
+Skip fresh explanations — skip students with generated_at < 600s old and ollama_reachable=true
+Build profile per student — batched queries:
 
-Computed at query time by `insights_engine.get_at_risk_students()`. Not stored — always fresh. Professors see only students in their own courses. Admins see all.
+One query: all attendance records + session/course context
+One batch JOIN query: avg temp + air quality across all missed sessions, grouped by course_id
+One GROUP BY query: peer attendance rate per enrolled course
 
-### Comfort Score Formula
-```
-comfort_score = 100
-  - max(0, temp - 26) * 5          # penalty above 26°C, -5 per degree
-  - max(0, 18 - temp) * 5          # penalty below 18°C
-  - max(0, humidity - 65) * 2      # penalty above 65% humidity
-  - max(0, (air_quality - 300) / 50)  # penalty above 300 ppm
-clamped to [0, 100]
-```
 
-### AI Summary Context Schema
-`ai_summary.py` builds a compact plain-text prompt (via `_context_to_prompt()`) and POSTs it to Ollama's `/api/chat` endpoint with the model specified by `OLLAMA_MODEL`. The system prompt instructs the model to produce 2–3 sentences identifying the key finding and one concrete recommendation. Output is capped at `num_predict: 120` tokens to ensure completion within the 90s timeout on CPU. If Ollama is unreachable or returns an error, the endpoint returns HTTP 503 — no crash. Results are cached in Redis per `(scope, id)` key for `AI_SUMMARY_CACHE_TTL` seconds.
+One LLM call per student — compact multi-course prompt → 3–4 sentence cross-course prose summary
+Upsert at_risk_explanations; remove stale rows for students who recovered above threshold
 
-Prompt example (compact plain-text, not raw JSON):
-```
-Scope: course — CS301 — Intro to Computing (last 8 weeks). Attendance: 74% (declining trend). Sessions analysed: 12. Students at risk: 3. Environment: comfort 62/100, avg temp 28.4°C, avg AQ 420 ppm. Recent alerts: temp_high x3, air_quality_high x1. Anomalies: attendance dropped 22% in week 6.
-```
+Prompt Constraints (phi3-mini, ~4k context)
 
-Exception handling in `generate_summary()`:
-- `httpx.TransportError` (ConnectError, TimeoutException, etc.) → 503 Ollama unreachable
-- `httpx.HTTPStatusError` (Ollama returns 4xx/5xx, e.g. model not found) → 503 Ollama error
-- Any other exception → 502
+Under 500 tokens per prompt
+Reference only data provided
+Never mention health, personal life, family, psychology
+No blame or evaluative judgments
+Plain prose only, under 100 words
 
-### Export Format
-- **Session PDF**: cover (course, date, professor), attendance table (name, status, detected_at), sensor summary table (avg/min/max per type), AI narrative paragraph, alert log
-- **Course PDF**: cover, per-session attendance bar chart (rendered as ASCII table fallback if chart lib unavailable), per-student rate table with at-risk flag, AI narrative
-- **Course CSV**: raw rows — `session_date, student_name, student_id, status, detected_at, adjusted_by`
+Performance (Phase 20 optimizations)
+MetricBeforeAfterStudents iteratedAll 35At-risk only ~8Sensor queries/studentN missed sessions × 21 batch JOINPeer-rate queries/student1 per course1 GROUP BYOllama calls/studentcourses + 1 (~7)1HTTP connectionsNew TCP per callShared AsyncClientRuntime (8 students)~14–16 min~2–3 min
+Ollama Docker Service
+Model persisted in named volume ollama_data. On backend startup: checks GET /api/tags; if model absent, fires POST /api/pull as non-blocking background task.
+Frontend
 
-PDF generation uses ReportLab's `Platypus` (Paragraph, Table, SimpleDocTemplate). No external font dependencies.
+Auto-polls every 8s while any student has generated_at=null, stops when all populated.
+If ollama_reachable=false → amber warning card "AI explanation unavailable".
+Admin-only "Recompute Now" button → spinner → refreshes list after 3s.
 
-### Mini-Cards on Existing Pages
-| Page | What is added |
-|---|---|
-| Dashboard | Comfort score pill (top of sensor strip) + "N students at risk" warning card if N > 0 |
-| Attendance | Risk badge (🔴/🟡) next to each student row; streak indicator "absent 3×" in subtitle |
-| History | Trend arrow (↑↓→) next to each session's attendance percentage |
-| Control | "AC ON for 2h, no occupancy detected" efficiency nudge card (from insights_engine) |
 
----
+At-Risk Page — Frontend Specification
 
-## Face Recognition Logic
+Route: /at-risk | Nav: "At-Risk" with warning triangle SVG icon
+Access: All professors (filtered to their courses) + admins (all students)
 
-> Applies only when `FACE_RECOGNITION_ENABLED=true` (Raspberry Pi with DeepFace installed natively).
+Left panel (~320px): Scrollable student cards sorted by overall_attendance_rate ascending (worst first). Each card: name, student ID, colored % badge (red < 50%, amber 50–69%), "Updated X ago".
+Right panel (detail): Student header → LLM summary card → per-course expandable cards (collapsed: code + name + rate pill; expanded: sessions_total, sessions_missed, avg_temp_on_missed, avg_aq_on_missed, peer delta, per-course text) → "Updated [relative time]" footer.
+Empty states: No at-risk students → illustrated "All students on track". Null explanation (Ollama down) → amber card with retry message. Admin recompute button with spinner.
 
-1. **Enrollment:** Upload up to 5 images → compute 128-d Facenet encoding → average → store as BYTEA float32
-2. **Recognition loop:** 2fps → detect faces → cosine distance < 0.6 → match → return `student_id` or `UNKNOWN`
-3. **Attendance recording:** First match per session → `attendance_record` status=`present` → 30s cooldown
-4. **UNKNOWN faces:** Increment occupancy counter → flag if high
+Phase Completion Status
+PhaseDescriptionStatus0Project scaffolding, Docker Compose, env setup✅1ESP32 firmware — sensors + MQTT publish✅2Backend foundation — FastAPI, DB models, MQTT bridge✅3Face recognition service + enrollment API✅4Session management + attendance engine✅5Control API + alert engine✅6Moodle sync service✅7WebSocket live streaming✅8React frontend✅9Integration testing + documentation✅10Full Docker deployment — nginx, Mosquitto, service wiring✅11Mock data fallback — backend publisher + frontend demo mode✅12Raspberry Pi setup runbook✅13Demo data seed script✅14JWT auth, professors table, role-based API filtering✅15Docker image slim — DeepFace/TF removed, stub, seed.py self-migrating✅16Professor Dashboard — session list + attendance table + sensor sparklines✅17Dashboard bug fixes — total_enrolled, key-based tab reset, count badges, MOCK_MODE✅18Full frontend visual redesign — CSS token system, typography, blue sidebar, Soft Structuralism✅19At-Risk Explanation — Ollama/phi3-mini, pipeline, DB table, At-Risk page✅20At-Risk pipeline performance — on-demand trigger, N+1 elimination, 1 LLM call/student, Redis cooldown, frontend auto-poll✅
 
-### Stub Mode (`FACE_RECOGNITION_ENABLED=false`)
-- Enrollment: stores zeroed 128-d float32 placeholder
-- Recognition loop: emits one synthetic attendance event every 45s for a random enrolled student
-- `reload_encodings()`: no-op
+Key Architectural Decisions (selected highlights)
+DecisionReasonFastAPI over FlaskNative async for WebSocket + MQTTAll services on RPi (no cloud)Avoid latency, cost, internet dependencyasyncio-mqtt → aiomqttpaho-mqtt v2 broke asyncio-mqttDeepFace → stub in DockerTF pulls ~600MB, causes OOM on dev laptopsRedis for live sensor stateInstant dashboard load, no PostgreSQL hitdisplay_status computed, not storedLiveness changes over time with no DB writetokens.css separate from index.cssTailwind v3 can't resolve CSS vars at build timeGlassmorphism removedGPU-expensive, rendering artifacts in ChromiumInline SVG iconsNo icon library dependency, only 10–12 icons neededper_course_data as JSONBAlways read/written as unit with parent; avoids join; atomic upsertRedis lock TTL not deleted on completionPrevents re-run on every page refresh; natural ~10-min cooldown1 LLM call/student (not N+1)Reduced runtime from ~14 min to ~2–3 min for 8 studentsJWT in localStorageAcceptable on university intranet; simpler than httpOnly cookiesOn-demand pipeline (no cron)Cron meant no explanations until 02:00; on-demand generates immediately on page open
 
----
+Known Issues & Limitations
+IssueWorkaroundCamera fails on non-PiStub mode replaces recognition loop transparentlyMQ-135 uncalibratedValues are comparative; threshold empirically set at 500DeepFace inference slow on RPi 4Keep RECOGNITION_FPS=2; upgrade to RPi 5 for better throughputMQTT QoS 0 (sensor loss during broker restart)Dashboard shows stale Redis data until next messageSingle-room designChange ROOM_ID in config.h + .envNo HTTPS/WSSAdd nginx SSL termination for public deploymentphi3-mini slow on RPi CPU (~10–30s/student)Frontend progressive polling every 8sphi3-mini first-run pull (~2GB)Startup pull non-blocking; re-open page after pull completes
 
-## Mock Sensor Logic (MOCK_MODE=true)
-
-`mock_sensor.py` publishes synthetic MQTT messages every 5s:
-- Temperature: 22–32°C sine wave + noise
-- Humidity: 45–70%
-- Air quality: 200–550 ppm, occasional spike above 500
-- Sound: 70% detected / 30% quiet
-- Heartbeat: every 30s
-
-Frontend activates client-side demo mode if no WS sensor message within 8s.
-
----
-
-## Phase Completion Status
-
-| Phase | Description | Status |
-|---|---|---|
-| Phase 0 | Project scaffolding, Docker Compose, env setup | ✅ Complete |
-| Phase 1 | ESP32 firmware — sensors + MQTT publish | ✅ Complete |
-| Phase 2 | Backend foundation — FastAPI, DB models, MQTT bridge | ✅ Complete |
-| Phase 3 | Face recognition service + enrollment API | ✅ Complete |
-| Phase 4 | Session management + attendance engine | ✅ Complete |
-| Phase 5 | Control API + alert engine | ✅ Complete |
-| Phase 6 | Moodle sync service | ✅ Complete |
-| Phase 7 | WebSocket live streaming | ✅ Complete |
-| Phase 8 | React frontend | ✅ Complete |
-| Phase 9 | Integration testing + documentation | ✅ Complete |
-| Phase 10 | Full Docker deployment — frontend nginx, Mosquitto broker, service wiring | ✅ Complete |
-| Phase 11 | Mock data fallback — backend publisher + frontend demo mode | ✅ Complete |
-| Phase 12 | Raspberry Pi setup runbook (docs/rpi_setup.md) | ✅ Complete |
-| Phase 13 | Demo data seed script (backend/seed.py) | ✅ Complete |
-| Phase 14 | JWT auth, professors table, role-based API filtering | ✅ Complete |
-| Phase 15 | Docker image slim — DeepFace/TF removed; FACE_RECOGNITION_ENABLED stub; seed.py self-migrating | ✅ Complete |
-| Phase 16 | Professor Dashboard — session list (live/upcoming/done) + attendance table + sensor cards/sparklines | ✅ Complete |
-| Phase 17 | Dashboard bug fixes — total_enrolled, key-based tab reset, session count badges, MOCK_MODE enabled | ✅ Complete |
-| Phase 18 | Full frontend visual redesign — CSS token system, DM Sans + Inter, blue sidebar, Soft Structuralism | ✅ Complete |
-| Phase 19 | Insights backend — insights_engine.py, all analytics endpoints, at-risk logic, comfort score | ✅ |
-| Phase 20 | AI summaries — ai_summary.py, Ollama/phi3:mini via httpx, Redis caching, AiSummaryCard frontend | ✅ |
-| Phase 21 | Insights frontend — Insights.jsx page (3 tabs), all chart components, mini-cards on existing pages | ✅ |
-| Phase 22 | Export system — ReportLab PDF (session + course), CSV download, ExportButton component | ✅ |
-
-> **Update this table at the end of every phase.** Change ⬜ to ✅ when complete, 🔄 when in progress.
-
----
-
-## Key Decisions Log
-
-| Decision | Reason | Date |
-|---|---|---|
-| FastAPI over Flask | Native async needed for WebSocket + MQTT bridge | Project start |
-| face_recognition lib over raw OpenCV | Higher accuracy, simpler API, dlib-based 128-d embeddings | Project start |
-| Run all services on RPi (no cloud) | Avoid latency, cost, and internet dependency for real-time control | Project start |
-| Docker Moodle instead of mock API | Gives real Moodle REST API to code against | Project start |
-| Redis for live sensor state | Instant dashboard load without hitting PostgreSQL | Project start |
-| asyncio-mqtt for MQTT bridge | Native async, integrates cleanly with FastAPI event loop | Project start |
-| Drop Blynk/Adafruit IO | Redundant with custom FastAPI backend | Project start |
-| Migrated asyncio-mqtt → aiomqtt | paho-mqtt v2 broke asyncio-mqtt 0.16 (missing message_retry_set) | Phase 2 |
-| attendance router mounted at /api prefix | Routes span /api/sessions/*/attendance and /api/attendance/* — single prefix avoids double-mounting | Phase 4 |
-| mark-absent as explicit endpoint | Face recognition only marks present; professor must trigger bulk absent-fill at session end | Phase 4 |
-| Student name cached per session in recognition_loop | Avoids repeated DB lookup per 2fps frame; name is immutable so cache never goes stale | Phase 4 |
-| publish_mqtt uses ephemeral client per call | MQTT subscriber loop cannot be reused for publishing — short-lived client is simplest safe pattern | Phase 5 |
-| AlertEngine uses AsyncIOScheduler | Runs on uvicorn event loop, no thread overhead, compatible with async DB calls | Phase 5 |
-| Alert deduplication via unacknowledged check | Prevents alert storms when threshold remains breached across multiple 30s check cycles | Phase 5 |
-| recognition_loop threads room_id through start_recognition | Phase 7 added room_id param so attendance events and anomaly alerts carry correct room for WebSocket routing | Phase 7 |
-| Moodle sync is fire-and-forget on session end | Failing Moodle must not block a professor from ending a class | Phase 6 |
-| Redis retry queue for failed Moodle syncs | AlertEngine retries every 10 min via APScheduler | Phase 6 |
-| moodle_client uses lazy httpx.AsyncClient singleton | Avoids reconnecting on every sync call while remaining safe to close on shutdown | Phase 6 |
-| WebSocket state lifted to SensorContext | Single WS connection per browser tab shared across all pages | Phase 8 |
-| Dashboard shows live WS attendance; Attendance page fetches API | Live events are ephemeral; historical records need full CRUD | Phase 8 |
-| History expandable rows use React.Fragment with key | Bare <> fragments don't support key prop | Phase 8 |
-| Test suite uses SQLite in-memory with gen_random_uuid() shim | Avoids requiring PostgreSQL in CI | Phase 9 |
-| e2e_test.py uses httpx sync client, not pytest | Simpler to run on the Pi itself | Phase 9 |
-| Migrated face_recognition → DeepFace | dlib/cmake fails on pip install; DeepFace is fully pip-installable | Phase 3 fix |
-| face_encodings BYTEA dtype changed float64 → float32 | DeepFace Facenet outputs float32; dtype mismatch corrupts cosine distance | Phase 3 fix |
-| Frontend served via nginx container (port 3000) | Production build requires static file server + reverse proxy | Phase 10 |
-| Mosquitto added as a Docker service | Containerised for full-stack local Docker deployment | Phase 10 |
-| Moodle moved to optional Docker profile | bitnami/moodle:4.3 retired; gated behind --profile moodle | Phase 10 |
-| aiomqtt 2.x uses plain async iterator for client.messages | async with removed in 2.x; must use async for | Phase 10 |
-| Mock sensor uses APScheduler job (backend) | Reuses existing scheduler; activated only when MOCK_MODE=true | Phase 11 |
-| Frontend fallback mock is client-side, independent of backend | WS timeout of 8s triggers in-browser generator; works fully offline | Phase 11 |
-| RPi setup documented as docs/rpi_setup.md runbook | Reduces setup errors during demo day | Phase 12 |
-| Seed script is idempotent standalone async script | Deterministic uuid.uuid5 IDs + ON CONFLICT DO NOTHING | Phase 13 |
-| JWT stored in localStorage | Acceptable for university intranet without HTTPS | Phase 14 |
-| REQUIRE_AUTH defaults to false | Preserves backward compatibility with seed.py and e2e tests | Phase 14 |
-| DeepFace removed from Docker image | TF pulls ~600 MB; OOM on dev laptops; runs natively on RPi only | Phase 15 |
-| enrollment.py delegates all DeepFace calls to face_recognition_service | Stub/real switch handled entirely inside service layer | Phase 15 |
-| seed.py calls _run_migrations() before asyncio.run() | Avoids nested event loop errors; ensures schema before any INSERT | Phase 15 |
-| display_status computed at schema/response time, never stored | Liveness changes with time; storing requires a background job to flip rows | Phase 16 |
-| WebSocket wins for live sensor cards; polling is fallback only | useLiveSensors owns WS; Dashboard watches isDemoMode to choose source | Phase 16 |
-| Sensor endpoints live in sessions.py, not sensors.py | URL namespace cleaner than domain namespace | Phase 16 |
-| Sparkline history stored in useRef + useState | Accumulating in state thrashes renders; ref flushes only on value change | Phase 16 |
-| AttendanceTab receives sessionId prop and fetches detail internally | total_enrolled only on detail endpoint, not list-endpoint | Phase 17 |
-| key={session.id} on tab components forces full remount on switch | More reliable than resetting individual useEffect states | Phase 17 |
-| MOCK_MODE=true set in docker-compose.yml | Dev without ESP32 needs mock MQTT to populate sensor_readings | Phase 17 |
-| Session count badges added to left-panel group headers | 31 past sessions require scrolling; count prevents "empty panel" confusion | Phase 17 |
-| tokens.css as design token source, separate from index.css | Tailwind v3 does not resolve CSS vars in bracket values at build time | Phase 18 |
-| CSS class names preserved, visual output changed | Zero JSX churn while achieving full redesign | Phase 18 |
-| Glassmorphism removed entirely | backdrop-filter expensive on GPU, causes Chromium artifacts | Phase 18 |
-| Inline SVG components instead of icon library | 10–12 icons; no extra bundle weight | Phase 18 |
-| LineChart → AreaChart with linearGradient fill | More visual weight; communicates trend direction clearly | Phase 18 |
-| DemoRow uses imperative onMouseEnter/Leave for hover colors | CSS hover cannot reference CSS vars in Tailwind v3 | Phase 18 |
-| h-screen kept on Layout root | h-full on panels requires ancestor with defined height | Phase 18 |
-| AttendanceBar renders proportional flex segments | overflow:hidden clips sub-pixel rounding | Phase 18 |
-| At-risk computed at query time, never stored | Rate changes after every session; storing requires background job | Phase 19 |
-| Comfort score formula is purely arithmetic, no ML | Reproducible, explainable, zero inference latency | Phase 19 |
-| AI summary scoped to anomaly/alert context only | Avoids overly broad AI calls; focused narrative is more actionable | Phase 20 |
-| AI summary uses Ollama via httpx | No Anthropic SDK dependency; httpx already in requirements; zero new packages; model is local and free | Phase 20 |
-| AI summary cached in Redis with 10-min TTL | Ollama inference on CPU takes 2–5s — unacceptable on every page load | Phase 20 |
-| OLLAMA_BASE_URL defaults to localhost:11434 | Works out-of-box for local Ollama; override to http://ollama:11434 when running Ollama as a Docker service | Phase 20 |
-| _context_to_prompt() serialises context as compact sentences, not json.dumps | Small models (phi3, llama3.2:1b) handle short natural-language prompts faster and more reliably than nested JSON blobs; reduces user-message tokens from ~300 to ~80 | Post-Phase 20 fix |
-| num_predict: 120 cap added to Ollama options | Uncapped generation on CPU hit the 60s timeout; 120 tokens completes in under 30s | Post-Phase 20 fix |
-| OLLAMA_MODEL env var replaces hardcoded phi3:mini constant | Model name must match exactly what `ollama list` shows; makes it swappable in docker-compose without a code rebuild | Post-Phase 20 fix |
-| httpx.TransportError replaces httpx.ConnectError in generate_summary() | ConnectError only catches refused connections; TimeoutException and RemoteProtocolError (common on Docker networking / CPU-slow Ollama) fell through to 502 instead of 503 | Post-Phase 20 fix |
-| ReportLab chosen for PDF over WeasyPrint | ReportLab is pure Python, no system font/CSS dependencies; works in Docker without extra apt packages | Phase 22 |
-| CSV export is raw SQL result serialized via csv.DictWriter | No pandas dependency; lighter on the Pi | Phase 22 |
-
----
-
-## Known Issues & Limitations
-
-| Issue | Description | Workaround |
-|---|---|---|
-| Camera unavailable on dev machine | cv2.VideoCapture(0) fails on non-Pi systems | Stub mode active by default |
-| MQ-135 not factory calibrated | ADC counts, not true CO₂ ppm | Threshold of 500 is empirically set |
-| DeepFace not installed in Docker image | FACE_RECOGNITION_ENABLED=false by default | Set true on RPi with DeepFace natively installed |
-| DeepFace inference speed on RPi | ~2fps after warm-up | Keep RECOGNITION_FPS=2 |
-| MQTT QoS 0 for sensors | Publishes lost during broker restart | Dashboard shows stale Redis data until next message |
-| Moodle token scope | Wrong scope causes silent 200 with error body | Check Moodle webservice logs |
-| Single-room design | Room ID hardcoded to room1 | Change ROOM_ID in config.h and .env |
-| No HTTPS / WSS | Plain HTTP only | Add nginx SSL termination for public deployment |
-| Dashboard live but no data (no ESP32) | Redis empty without MQTT publisher | Set MOCK_MODE=true |
-| AI summary latency | Ollama inference on CPU takes 10–30s on first request | Capped at 120 output tokens; cached in Redis for 10 min; AiSummaryCard shows skeleton loader on first request |
-| AI summary unavailable | 503 if Ollama is not running or unreachable | AiSummaryCard renders a clear "not reachable" message instead of crashing |
-
----
-
-## Future Work
-
-| Feature | Description |
-|---|---|
-| Multi-room support | Parametric room_id throughout |
-| Mobile app | React Native for professors |
-| Better lighting for face recognition | IR illuminator module |
-| Email / SMS notifications | SMTP or Twilio for critical alerts |
-| Student self-enrollment QR codes | Scan to trigger face enrollment |
-| CO₂ sensor calibration | Replace MQ-135 with SCD30 or MH-Z19 |
-| Offline resilience | Local SQLite fallback on RPi |
-| Attendance analytics — scheduled email digest | Weekly at-risk report emailed to professors automatically |
-| Predictive at-risk model | Logistic regression trained on attendance + sensor data to predict dropout risk |
-
----
-
-## How to Update This File
-
-After completing each phase, update:
-1. The **Phase Completion Status** table (mark ✅)
-2. The **Key Decisions Log** if any architectural decision was changed
-3. Any schema or API changes made during implementation
-4. Any environment variables added
-
-Keep this file committed to the repository. It is the handoff document for every team member.
+Future Work
+Multi-room support, React Native mobile app, IR illuminator for low-light face recognition, email/SMS alerts, QR-code student self-enrollment, attendance analytics dashboard, CO₂ sensor calibration (SCD30/MH-Z19), offline SQLite fallback, daily at-risk email digest, quantized GGUF model via llama.cpp for faster RPi inference.

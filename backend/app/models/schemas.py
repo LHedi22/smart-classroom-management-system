@@ -345,3 +345,31 @@ class CorrelationPoint(BaseModel):
     course_code: str | None = None
     avg_air_quality: float | None = None
     pct_sound_detected: float | None = None
+
+
+# ── At-Risk Explanation (Phase 19) ────────────────────────────────────────
+
+class PerCourseRisk(BaseModel):
+    course_id: str
+    course_code: str
+    course_name: str
+    attendance_rate: float
+    sessions_total: int
+    sessions_missed: int
+    avg_temp_on_missed: float | None
+    avg_aq_on_missed: float | None
+    peer_delta: float | None
+    explanation: str | None
+
+
+class AtRiskStudentResponse(BaseModel):
+    student_id: str
+    student_name: str
+    student_number: str
+    overall_attendance_rate: float
+    summary_explanation: str | None
+    per_course_data: list[PerCourseRisk]
+    generated_at: datetime | None
+    ollama_reachable: bool
+
+    model_config = {"from_attributes": True}

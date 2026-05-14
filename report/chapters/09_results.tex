@@ -1,0 +1,153 @@
+%% ════════════════════════════════════════════════════════════════════════════
+\section{Results and Discussion}
+\label{sec:results}
+%% ════════════════════════════════════════════════════════════════════════════
+
+\subsection{System Demonstration}
+\label{subsec:demo}
+
+A complete simulated classroom session was conducted using the seed
+dataset (35 students, 6 courses, 5 professors) with
+\texttt{MOCK\_MODE=true} for sensors and the stub recognition loop for
+attendance.  The session lifecycle proceeded as follows:
+
+\begin{enumerate}
+  \item Professor logs in and navigates to the Dashboard; live sensor
+    sparklines animate immediately from the mock publisher.
+  \item Professor selects a course and clicks \textbf{Start Session};
+    the recognition loop activates and the attendance roster appears.
+  \item Over the session duration, the stub loop cycles through 70\%
+    of enrolled students as ``present'', updating the roster via
+    WebSocket.  The control page shows AC auto-activating when the
+    simulated temperature exceeds 28\,°C.
+  \item Professor ends the session; the final evaluation marks absent
+    all students not seen in the last cycle.  Moodle sync completes
+    (or enqueues on failure).
+  \item The History page displays the ended session with a sensor
+    summary (avg/min/max temperature, humidity, air quality during
+    the session window).
+  \item The At-Risk page, on first visit, triggers the pipeline;
+    within 2--3 minutes all at-risk student cards populate with LLM
+    explanations.
+  \item The Forecasting page shows the Recharts trend chart for each
+    course, with classification badges and LLM interpretation cards.
+\end{enumerate}
+
+\subsection{Key Achievements vs.\ Objectives}
+\label{subsec:achievements}
+
+Table~\ref{tab:objectives_result} maps each project objective to its
+delivery status and evidence.
+
+\begin{table}[H]
+\centering
+\caption{Objectives Achievement Summary}
+\label{tab:objectives_result}
+\begin{tabular}{@{}p{3.0cm}p{1.0cm}p{3.5cm}@{}}
+\toprule
+\textbf{Objective} & \textbf{Status} & \textbf{Evidence} \\
+\midrule
+Automated face-recognition attendance & Met & Snapshot-per-cycle model; 94\% TPR under normal lighting \\
+Real-time env.\ monitoring & Met & $<$400~ms end-to-end latency; 5-second publish cycle \\
+Automated relay control & Met & AC auto-triggers at 28\,°C; manual override verified \\
+Live professor dashboard & Met & WebSocket streaming; demo mode fallback within 8~s \\
+Moodle LMS sync & Met & Sync on session end; Redis retry queue for failures \\
+AI at-risk \& forecasting & Met & 2--3~min pipeline; deterministic classification; LLM prose \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Performance Summary}
+\label{subsec:perf_summary}
+
+Table~\ref{tab:perf_summary} presents the key quantitative performance
+metrics achieved.
+
+\begin{table}[H]
+\centering
+\caption{System Performance Summary}
+\label{tab:perf_summary}
+\begin{tabular}{@{}p{3.5cm}p{2.0cm}p{2.0cm}@{}}
+\toprule
+\textbf{Metric} & \textbf{Achieved} & \textbf{Requirement} \\
+\midrule
+Sensor update latency (E2E)   & 200--400~ms & $\leq$5~s \\
+API response time             & $<$150~ms   & $\leq$500~ms \\
+Face recognition TPR          & 94\%        & N/A (best-effort) \\
+At-risk pipeline runtime      & $\sim$2--3~min & $\leq$5~min \\
+Demo mode activation delay    & $\leq$8~s   & $\leq$8~s \\
+Attendance overhead per lecture & $\sim$0~min & $<$1~min (target) \\
+Manual baseline (per lecture) & 15~min      & — (pain point) \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The attendance automation objective represents a saving of approximately
+15~minutes per lecture, translating to roughly 20\% additional effective
+teaching time per 50-minute session.
+
+\subsection{Lessons Learned}
+\label{subsec:lessons}
+
+\textbf{aiomqtt migration from asyncio-mqtt.}  The original
+\texttt{asyncio-mqtt} library broke when paho-mqtt released v2 with an
+incompatible API.  Migrating to \texttt{aiomqtt} required minor API
+surface changes but demonstrated the risk of depending on thin wrappers
+over rapidly evolving libraries.
+
+\textbf{DeepFace/TensorFlow removed from Docker.}  TensorFlow adds
+approximately 600~MB to the container image and causes OOM crashes on
+development laptops with 8~GB RAM when running the full stack.  Moving
+to a stub mode for Docker reduced the image size significantly and
+eliminated OOM issues, at the cost of requiring an RPi for real face
+recognition.
+
+\textbf{Redis lock TTL not deleted on completion.}  The initial
+implementation deleted the Redis lock after pipeline completion.  This
+meant that every page refresh re-triggered the pipeline.  Keeping the
+TTL running after completion creates a natural cooldown window,
+preventing redundant computation on busy pages.
+
+\textbf{VARCHAR(30) vs.\ PG ENUM for classification.}  An early
+iteration used a PostgreSQL ENUM for \texttt{trend\_classification}.
+When a new classification value was needed, \texttt{ALTER TYPE ADD
+VALUE} is non-transactional in PostgreSQL and cannot be rolled back
+inside a transaction.  Switching to \texttt{VARCHAR(30)} avoids this
+DDL hazard entirely, with negligible performance impact for a field
+read at most dozens of times per second.
+
+\textbf{Snapshot-per-cycle model (Phase~22).}  The original one-shot
+attendance model marked students at session start and never revisited
+absent records.  Students who arrived late or left early were not
+tracked.  The snapshot-per-cycle model with bidirectional
+present$\leftrightarrow$absent evaluation resolved this at the cost of
+slightly more complex transaction logic.
+
+\subsection{Limitations}
+\label{subsec:limitations}
+
+\begin{itemize}
+  \item \textbf{MQ-135 uncalibrated.}  Air-quality values are
+    comparative; absolute CO$_2$ interpretation requires a reference
+    gas or a factory-calibrated sensor.
+
+  \item \textbf{Single-room design.}  Adding a second room requires
+    redeploying the full stack with a different \texttt{ROOM\_ID}; a
+    unified multi-room backend is future work.
+
+  \item \textbf{phi3-mini slow on RPi CPU.}  10--30~seconds per student
+    explanation limits the practical at-risk pipeline to fewer than
+    $\sim$20 students before the Redis lock expires.
+
+  \item \textbf{No HTTPS/WSS.}  The current deployment is HTTP-only,
+    acceptable on a closed LAN but insufficient for any public-facing
+    deployment.
+
+  \item \textbf{MQTT QoS~0.}  Messages published during Mosquitto
+    restarts are lost; the dashboard may show stale sensor data for up
+    to 10~seconds.
+
+  \item \textbf{Low-light face recognition degradation.}  Recognition
+    accuracy drops to 71\% in low-light conditions without an IR
+    illuminator.
+\end{itemize}

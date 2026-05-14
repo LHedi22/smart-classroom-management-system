@@ -22,6 +22,7 @@ export default function useLiveSensors() {
   const [relayStatus, setRelayStatus] = useState({ ac: 'auto', lighting: 'auto' })
   const [isConnected, setIsConnected] = useState(false)
   const [isDemoMode, setIsDemoMode]   = useState(false)
+  const [deviceOnline, setDeviceOnline] = useState(false)
 
   const wsRef           = useRef(null)
   const backoff         = useRef(INITIAL_BACKOFF)
@@ -57,6 +58,7 @@ export default function useLiveSensors() {
       case 'snapshot':
         setSensors(msg.sensors ?? {})
         setRelayStatus(msg.relay ?? { ac: 'auto', lighting: 'auto' })
+        setDeviceOnline(msg.device_online ?? false)
         break
       case 'sensor':
         setSensors(prev => ({
@@ -101,6 +103,7 @@ export default function useLiveSensors() {
 
     ws.onclose = () => {
       setIsConnected(false)
+      setDeviceOnline(false)
       if (!dead.current) {
         retryTimer.current = setTimeout(() => {
           backoff.current = Math.min(backoff.current * 2, MAX_BACKOFF)
@@ -135,5 +138,5 @@ export default function useLiveSensors() {
     }
   }, [connect])
 
-  return { sensors, attendance, alerts, relayStatus, isConnected, isDemoMode }
+  return { sensors, attendance, alerts, relayStatus, isConnected, isDemoMode, deviceOnline }
 }

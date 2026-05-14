@@ -1,0 +1,272 @@
+%% ════════════════════════════════════════════════════════════════════════════
+\section{Full REST API Endpoint Reference}
+\label{app:api}
+%% ════════════════════════════════════════════════════════════════════════════
+
+Table~\ref{tab:app_api} lists all REST endpoints with method, path,
+authentication requirement, and role restriction.
+
+\begin{table}[H]
+\centering
+\caption{Complete REST API Endpoint Reference}
+\label{tab:app_api}
+\begin{tabular}{@{}p{0.8cm}p{3.6cm}p{1.2cm}p{2.0cm}@{}}
+\toprule
+\textbf{M.} & \textbf{Path} & \textbf{Auth} & \textbf{Role} \\
+\midrule
+POST & \texttt{/api/auth/login}               & No  & Any \\
+GET  & \texttt{/api/sensors/latest}           & JWT & Any \\
+GET  & \texttt{/api/sensors/history}          & JWT & Any \\
+GET  & \texttt{/api/sessions/\{id\}/sensors/latest} & JWT & Any \\
+GET  & \texttt{/api/sessions/\{id\}/sensors/summary} & JWT & Any \\
+POST & \texttt{/api/sessions/start}           & JWT & Prof \\
+POST & \texttt{/api/sessions/\{id\}/end}      & JWT & Prof \\
+GET  & \texttt{/api/sessions}                 & JWT & Prof \\
+GET  & \texttt{/api/sessions/\{id\}}          & JWT & Prof \\
+POST & \texttt{/api/control/ac}               & JWT & Prof \\
+POST & \texttt{/api/control/lighting}         & JWT & Prof \\
+GET  & \texttt{/api/control/status/\{room\}}  & JWT & Prof \\
+GET  & \texttt{/api/alerts}                   & JWT & Prof \\
+PATCH& \texttt{/api/alerts/\{id\}/acknowledge}& JWT & Prof \\
+GET  & \texttt{/api/alerts/unread-count/\{room\}} & JWT & Prof \\
+GET  & \texttt{/api/courses}                  & JWT & Prof \\
+POST & \texttt{/api/courses}                  & JWT & Prof \\
+POST & \texttt{/api/courses/\{id\}/enroll}    & JWT & Prof \\
+GET  & \texttt{/api/sessions/\{id\}/attendance} & JWT & Prof \\
+PATCH& \texttt{/api/attendance/\{id\}}        & JWT & Prof \\
+POST & \texttt{/api/sessions/\{id\}/mark-absent} & JWT & Prof \\
+GET  & \texttt{/api/students}                 & JWT & Prof \\
+POST & \texttt{/api/students}                 & JWT & Prof \\
+POST & \texttt{/api/students/\{id\}/enroll-face} & JWT & Prof \\
+GET  & \texttt{/api/at-risk}                  & JWT & Prof \\
+GET  & \texttt{/api/at-risk/\{student\_id\}}  & JWT & Prof \\
+POST & \texttt{/api/at-risk/recompute}        & JWT & Admin \\
+GET  & \texttt{/api/forecasting}              & JWT & Prof \\
+GET  & \texttt{/api/forecasting/\{course\_id\}} & JWT & Prof \\
+POST & \texttt{/api/forecasting/recompute}    & JWT & Admin \\
+GET  & \texttt{/api/webcam/recognition-status} & JWT & Prof \\
+POST & \texttt{/api/webcam/start-recognition} & JWT & Prof \\
+POST & \texttt{/api/webcam/stop-recognition}  & JWT & Prof \\
+GET  & \texttt{/api/webcam/encodings}         & JWT & Prof \\
+POST & \texttt{/api/webcam/attendance}        & JWT & Prof \\
+WS   & \texttt{/ws/classroom/\{room\_id\}}    & No  & — \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+%% ════════════════════════════════════════════════════════════════════════════
+\section{MQTT Topic Schema}
+\label{app:mqtt}
+%% ════════════════════════════════════════════════════════════════════════════
+
+All topics follow the pattern \texttt{classroom/\{room\_id\}/\{suffix\}}.
+The default \texttt{room\_id} is \texttt{room1}, configurable via the
+\texttt{ROOM\_ID} environment variable and the ESP32 \texttt{config.h}.
+
+\begin{table}[H]
+\centering
+\caption{MQTT Full Topic Schema with JSON Payload Schemas}
+\label{tab:app_mqtt}
+\begin{tabular}{@{}p{2.5cm}p{1.0cm}p{4.0cm}@{}}
+\toprule
+\textbf{Suffix} & \textbf{QoS} & \textbf{JSON Schema} \\
+\midrule
+\texttt{sensors/temperature} & 0 & \texttt{\{"value": float, "unit": "C", "ts": int\}} \\
+\texttt{sensors/humidity}    & 0 & \texttt{\{"value": float, "unit": "\%", "ts": int\}} \\
+\texttt{sensors/air\_quality}& 0 & \texttt{\{"value": int, "unit": "ppm", "ts": int\}} \\
+\texttt{sensors/sound}       & 0 & \texttt{\{"value": 0|1, "unit": "bool", "ts": int\}} \\
+\texttt{status}              & 0 & \texttt{\{"online": true, "ts": int\}} \\
+\texttt{relay/ac}            & 0 & \texttt{\{"action": "on"|"off"|"auto"\}} \\
+\texttt{relay/lighting}      & 0 & \texttt{\{"action": "on"|"off"|"auto"\}} \\
+\texttt{alerts}              & 0 & \texttt{\{"type": str, "value": float\}} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+%% ════════════════════════════════════════════════════════════════════════════
+\section{Database Schema}
+\label{app:db}
+%% ════════════════════════════════════════════════════════════════════════════
+
+The following definitions correspond to the SQLAlchemy ORM models in
+\texttt{backend/app/models/db\_models.py}. All primary keys are UUIDs
+generated server-side.
+
+\begin{verbatim}
+professors(id PK, name, email UNIQUE, hashed_password,
+           role ENUM(professor|admin), created_at)
+
+students(id PK, name, student_id UNIQUE, created_at)
+
+courses(id PK, code UNIQUE, name,
+        professor_id FK→professors NULLABLE,
+        professor_name)
+
+sessions(id PK, course_id FK→courses, room_id,
+         started_at, ended_at NULLABLE,
+         status ENUM(active|ended|upcoming))
+
+attendance_records(id PK, session_id FK, student_id FK,
+  status ENUM(present|absent|late|excused),
+  detected_at, adjusted_by NULLABLE,
+  adjusted_at NULLABLE, moodle_synced BOOL DEFAULT false)
+
+face_encodings(id PK, student_id FK→students,
+               encoding BYTEA, created_at)
+
+sensor_readings(id PK, room_id, sensor_type ENUM,
+                value FLOAT, unit, recorded_at)
+
+alerts(id PK, room_id, type ENUM, value FLOAT NULLABLE,
+       message TEXT, acknowledged BOOL DEFAULT false,
+       created_at)
+
+at_risk_explanations(id PK, student_id FK UNIQUE,
+  overall_attendance_rate FLOAT,
+  summary_explanation TEXT,
+  per_course_data JSONB,
+  generated_at TIMESTAMP,
+  ollama_reachable BOOL)
+
+attendance_forecasts(id PK, course_id FK UNIQUE,
+  trend_data JSONB,
+  expected_next_rate FLOAT NULLABLE,
+  trend_classification VARCHAR(30) NULLABLE,
+  confidence_level VARCHAR(10) NULLABLE,
+  interpretation TEXT NULLABLE,
+  suggested_action VARCHAR(30) NULLABLE,
+  ollama_reachable BOOL,
+  generated_at TIMESTAMP)
+\end{verbatim}
+
+%% ════════════════════════════════════════════════════════════════════════════
+\section{Environment Variables Reference}
+\label{app:env}
+%% ════════════════════════════════════════════════════════════════════════════
+
+\begin{table}[H]
+\centering
+\caption{Complete Environment Variable Reference}
+\label{tab:app_env}
+\begin{tabular}{@{}p{3.5cm}p{1.8cm}p{2.2cm}@{}}
+\toprule
+\textbf{Variable} & \textbf{Default} & \textbf{Notes} \\
+\midrule
+\texttt{DATABASE\_URL}         & (required)    & asyncpg DSN \\
+\texttt{REDIS\_URL}            & (required)    & redis:// DSN \\
+\texttt{MQTT\_BROKER\_HOST}    & mosquitto     & Container name \\
+\texttt{MQTT\_BROKER\_PORT}    & 1883          & TCP port \\
+\texttt{ROOM\_ID}              & room1         & Must match ESP32 config \\
+\texttt{MOCK\_MODE}            & false         & true: no ESP32 needed \\
+\texttt{FACE\_RECOGNITION\_ENABLED} & false   & true: RPi + camera only \\
+\texttt{SECRET\_KEY}           & changeme…     & MUST replace in prod \\
+\texttt{REQUIRE\_AUTH}         & false         & true in production \\
+\texttt{ACCESS\_TOKEN\_EXPIRE\_MINUTES} & 480 & JWT TTL \\
+\texttt{TEMP\_AC\_ON\_THRESHOLD}  & 28         & °C \\
+\texttt{TEMP\_AC\_OFF\_THRESHOLD} & 22         & °C \\
+\texttt{AIR\_QUALITY\_ALERT\_THRESHOLD} & 500 & ppm \\
+\texttt{FACE\_RECOGNITION\_THRESHOLD} & 0.40  & Cosine distance \\
+\texttt{RECOGNITION\_FPS}      & 2             & Camera FPS \\
+\texttt{AT\_RISK\_THRESHOLD}   & 0.70          & Fraction \\
+\texttt{FORECAST\_WINDOW}      & 8             & Past sessions \\
+\texttt{ATTENDANCE\_CYCLE\_DURATION} & 60     & Seconds/cycle \\
+\texttt{OLLAMA\_BASE\_URL}     & http://ollama:11434 & Internal URL \\
+\texttt{OLLAMA\_MODEL}         & phi3:mini     & Model tag \\
+\texttt{MOODLE\_URL}           & (optional)    & LMS base URL \\
+\texttt{MOODLE\_TOKEN}         & (optional)    & REST API token \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+%% ════════════════════════════════════════════════════════════════════════════
+\section{Hardware Wiring Diagram}
+\label{app:wiring}
+%% ════════════════════════════════════════════════════════════════════════════
+
+The complete ESP32 GPIO assignment is shown in Table~\ref{tab:app_gpio}.
+Figure~\ref{fig:esp32_wiring} (Section~\ref{subsec:iot_layer}) provides
+the full wiring diagram.
+
+\begin{table}[H]
+\centering
+\caption{ESP32 GPIO Pin Assignment}
+\label{tab:app_gpio}
+\begin{tabular}{@{}p{1.0cm}p{1.5cm}p{2.2cm}p{3.0cm}@{}}
+\toprule
+\textbf{GPIO} & \textbf{Dir.} & \textbf{Component} & \textbf{Signal} \\
+\midrule
+4  & In  & DHT21        & Temp/humidity (1-wire) \\
+34 & In  & MQ-135       & Air quality ADC (0--4095) \\
+35 & In  & ACP014       & Sound detect (digital) \\
+21 & I2C & LCD 16×2     & I2C SDA \\
+22 & I2C & LCD 16×2     & I2C SCL \\
+26 & Out & Relay CH1/LLC & AC relay control \\
+27 & Out & Relay CH2/LLC & Lighting relay control \\
+14 & Out & Relay CH3/LLC & Spare \\
+12 & Out & Relay CH4/LLC & Spare \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+GPIO pins 34 and 35 are input-only and have no internal pull-up or
+pull-down resistors.  The logic-level converter (3.3\,V $\leftrightarrow$
+5\,V) is mandatory between the ESP32 outputs and the relay IN pins.
+
+%% ════════════════════════════════════════════════════════════════════════════
+\section{Docker Compose Configuration Summary}
+\label{app:docker}
+%% ════════════════════════════════════════════════════════════════════════════
+
+\begin{table}[H]
+\centering
+\caption{Docker Compose Services}
+\label{tab:app_docker}
+\begin{tabular}{@{}p{1.8cm}p{2.2cm}p{0.8cm}p{2.7cm}@{}}
+\toprule
+\textbf{Service} & \textbf{Image} & \textbf{Port} & \textbf{Volume} \\
+\midrule
+postgres    & postgres:15-alpine    & 5432 & postgres\_data \\
+redis       & redis:7-alpine        & 6379 & redis\_data \\
+mosquitto   & eclipse-mosquitto:2   & 1883 & mosquitto\_data \\
+backend     & custom (slim)         & 8000 & — \\
+frontend    & custom (nginx)        & 3000 & — \\
+ollama      & ollama/ollama:latest  & 11434 & ollama\_data \\
+moodle*     & bitnami/moodle:4      & 8080 & moodle\_data \\
+mariadb*    & mariadb:10.6          & 3306 & mariadb\_data \\
+\bottomrule
+\multicolumn{4}{l}{* Optional; activated with \texttt{--profile moodle}}
+\end{tabular}
+\end{table}
+
+Quick-start commands:
+\begin{verbatim}
+# Full stack (with ESP32)
+docker compose up -d
+
+# Without ESP32 (mock sensors)
+MOCK_MODE=true docker compose up -d
+
+# With Moodle LMS
+docker compose --profile moodle up -d
+
+# Seed demo data
+docker compose exec backend python seed.py
+\end{verbatim}
+
+%% ════════════════════════════════════════════════════════════════════════════
+\section{Notion Project Board}
+\label{app:notion}
+%% ════════════════════════════════════════════════════════════════════════════
+
+Figure~\ref{fig:notion_appendix} shows the Notion task board used for
+project tracking across all 22 development phases.  Each task was
+assigned to a team member, estimated in hours, and marked complete on
+the day it was merged to the main branch.
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=\linewidth]{screenshot_notion}
+  \caption{Notion project board: 22-phase delivery tracking with
+    assignee and completion status.}
+  \label{fig:notion_appendix}
+\end{figure}

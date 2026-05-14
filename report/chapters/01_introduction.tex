@@ -1,0 +1,110 @@
+%% ════════════════════════════════════════════════════════════════════════════
+\section{Introduction}
+\label{sec:intro}
+%% ════════════════════════════════════════════════════════════════════════════
+
+\subsection{Context and Motivation}
+\label{subsec:context}
+
+The growing adoption of Internet of Things (IoT) technology in education
+has opened new possibilities for automating routine classroom tasks and
+improving the quality of the learning environment.  Despite this trend,
+many universities---including SMU\,--\,Mediterranean Institute of
+Technology---continue to rely on manual processes for attendance
+management and environmental control.  Professors spend up to 15~minutes
+per lecture calling roll, consuming valuable instructional time.
+Meanwhile, classroom HVAC systems and lighting are operated without any
+sensor feedback, leaving occupant comfort dependent on manual judgment.
+Early identification of students at risk of academic failure due to poor
+attendance remains largely reactive, with intervention arriving after the
+damage is already done.
+
+The convergence of affordable edge hardware (ESP32, Raspberry Pi~4B),
+open-source ML frameworks (DeepFace, Ollama), and lightweight message
+protocols (MQTT) makes it feasible to deploy a fully autonomous
+classroom management platform at minimal cost, running entirely on the
+university's local area network with no cloud dependency.
+
+\subsection{Problem Statement}
+\label{subsec:problem}
+
+Three concrete pain points motivate this work:
+
+\begin{enumerate}
+  \item \textbf{Attendance inefficiency.}  Manual roll-call consumes up
+    to 15~minutes per session---time that reduces effective teaching time
+    by 15--20\% for a 50-minute lecture.  Records are entered manually
+    into the Moodle LMS, creating duplication of effort and data-entry
+    errors.
+
+  \item \textbf{Unmonitored environment.}  No real-time sensor data is
+    available to inform HVAC or lighting decisions.  Temperature, humidity,
+    CO$_2$/VOC levels, and occupancy are unknown to both professors and
+    facility managers.
+
+  \item \textbf{No early warning for at-risk students.}  Advising staff
+    receive no automated signal when a student's attendance rate begins to
+    decline.  Intervention is reactive rather than preventive, reducing
+    its effectiveness.
+\end{enumerate}
+
+\subsection{Project Objectives}
+\label{subsec:objectives}
+
+The general objective of this project is to design and implement an
+IoT-based smart classroom management system that automates student
+attendance via camera-based face recognition, monitors classroom
+environmental conditions in real time, enables automated and manual
+control of AC and lighting, provides professors with a live web
+dashboard, synchronises attendance to the Moodle LMS, and identifies
+at-risk students and attendance trends using a locally hosted LLM---all
+running on a Raspberry Pi~4B without cloud dependency.
+
+The six specific objectives are:
+\begin{enumerate}
+  \item Automate student attendance recording using face recognition.
+  \item Monitor classroom environmental conditions (temperature, humidity,
+    air quality, sound) in real time.
+  \item Enable automated and manual control of AC and lighting via relay
+    actuation.
+  \item Provide professors with a live web dashboard showing attendance,
+    sensor data, and alerts.
+  \item Synchronise attendance records to Moodle automatically on session
+    end.
+  \item Identify at-risk students and forecast attendance trends using AI
+    analytics.
+\end{enumerate}
+
+\subsection{Scope and Limitations}
+\label{subsec:scope}
+
+The system is scoped to a single classroom room (\texttt{room1}) on the
+university intranet.  All services run locally on the Raspberry Pi~4B;
+there is no internet dependency during normal operation.  The academic
+semester timeline constrained the project to a proof-of-concept
+deployment with physical hardware; production hardening (HTTPS/WSS,
+multi-room support) is identified as future work.
+
+Hardware budget constraints led to the selection of the MQ-135 gas
+sensor, whose output is uncalibrated and used comparatively rather than
+as an absolute CO$_2$ reference.  The Raspberry Pi~4B's CPU limits
+face-recognition throughput to 2~fps and phi3-mini inference to
+10--30~seconds per student.
+
+\subsection{Report Structure}
+\label{subsec:structure}
+
+Section~\ref{sec:literature} reviews related work on IoT-based attendance
+systems, face recognition, and edge AI.
+Section~\ref{sec:requirements} presents stakeholder analysis and
+functional and non-functional requirements.
+Section~\ref{sec:architecture} describes the full system architecture
+across all subsystem layers.
+Section~\ref{sec:implementation} details hardware assembly, firmware, and
+software implementation.
+Section~\ref{sec:ai} covers the AI analytics pipelines.
+Section~\ref{sec:security} analyses security and privacy considerations.
+Section~\ref{sec:testing} documents the testing and validation approach.
+Section~\ref{sec:results} presents results and key lessons learned.
+Section~\ref{sec:conclusion} concludes with a summary of contributions
+and directions for future work.

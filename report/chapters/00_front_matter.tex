@@ -1,0 +1,39 @@
+%% ── Abstract ──────────────────────────────────────────────────────────────
+\begin{abstract}
+This paper presents the design and implementation of the Smart Campus
+Classroom Management System, an IoT and edge-AI platform developed at
+SMU\,--\,Mediterranean Institute of Technology.  The system addresses
+three core problems in traditional classroom operation: manual attendance
+taking (up to 15~minutes per lecture), the absence of real-time
+environmental monitoring, and the lack of early-warning mechanisms for
+academically at-risk students.
+
+The solution integrates an ESP32 microcontroller---equipped with
+temperature, humidity, air-quality, and sound sensors---with a Raspberry
+Pi~4B edge server that runs all services without cloud dependency.
+Student attendance is automated via camera-based face recognition using
+DeepFace/FaceNet 128-dimensional embeddings with cosine-distance
+matching.  Sensor data is streamed over MQTT (Mosquitto broker) to a
+FastAPI backend and forwarded in real time to a React professor dashboard
+via WebSocket.  AC and lighting are controlled automatically based on
+configurable thresholds, with manual professor override.  Attendance
+records are synchronised to the Moodle LMS on session completion.
+
+An AI analytics layer, built on a locally hosted Ollama phi3-mini LLM,
+identifies at-risk students (below 70\% attendance) and generates
+natural-language explanations; a deterministic forecasting pipeline
+classifies per-course attendance trends and adds LLM-generated prose
+interpretations.  The complete stack is containerised with Docker~Compose
+and was delivered across 22 development phases within a single academic
+semester.  Evaluation demonstrates full elimination of manual attendance
+overhead, end-to-end sensor latency below 5~seconds, and AI pipeline
+runtime reduction from approximately 14--16~minutes to 2--3~minutes
+through batch-query optimisation.
+\end{abstract}
+
+%% ── Keywords ──────────────────────────────────────────────────────────────
+\begin{IEEEkeywords}
+IoT, smart classroom, face recognition, MQTT, FastAPI, edge computing,
+LLM, at-risk detection, attendance automation, Raspberry Pi, ESP32,
+Docker, WebSocket, Moodle
+\end{IEEEkeywords}

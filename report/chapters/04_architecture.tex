@@ -1,0 +1,527 @@
+%% ════════════════════════════════════════════════════════════════════════════
+\section{System Architecture}
+\label{sec:architecture}
+%% ════════════════════════════════════════════════════════════════════════════
+
+\subsection{Architecture Overview}
+\label{subsec:arch_overview}
+
+The system follows a \emph{hybrid modular monolith with event-driven
+messaging} architecture.  The backend is a single FastAPI process; however,
+it is internally structured around three decoupled event channels: an MQTT
+ingestion pipeline, a WebSocket fan-out layer, and an on-demand AI
+pipeline bus.  This avoids the operational overhead of microservices while
+preserving the loose coupling that makes each subsystem independently
+testable.
+
+Figure~\ref{fig:arch_overview} shows the five-tier logical view: IoT
+devices at the edge, a Mosquitto message broker, the FastAPI backend with
+its service groups, the React frontend, and external integrations
+(Moodle, Ollama).
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=\linewidth]{fig01_system_architecture}
+  \caption{Full system layered architecture: IoT $\rightarrow$ Edge
+    $\rightarrow$ Backend $\rightarrow$ Frontend $\rightarrow$ External.}
+  \label{fig:arch_overview}
+\end{figure}
+
+Table~\ref{tab:tech_stack} summarises the technology choices for each
+layer, and Table~\ref{tab:subsystems} lists each subsystem's primary
+responsibility.
+
+\begin{table}[H]
+\centering
+\caption{Technology Stack Summary}
+\label{tab:tech_stack}
+\begin{tabular}{@{}p{1.8cm}p{2.2cm}p{3.5cm}@{}}
+\toprule
+\textbf{Layer} & \textbf{Technology} & \textbf{Key Libraries} \\
+\midrule
+Firmware    & Arduino C++    & PubSubClient, DHT, LiquidCrystal\_I2C \\
+Backend     & Python 3.11    & FastAPI, SQLAlchemy 2.0, aiomqtt, APScheduler, httpx \\
+Database    & PostgreSQL 15  & Alembic (migrations) \\
+Cache       & Redis 7        & redis-py async \\
+AI          & Ollama phi3-mini & httpx AsyncClient \\
+Face Rec.   & DeepFace       & OpenCV, FaceNet, numpy \\
+Frontend    & React 18       & Vite, TailwindCSS, Recharts, axios \\
+Infra       & Docker Compose & nginx, eclipse-mosquitto:2 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[H]
+\centering
+\caption{Subsystem Responsibilities}
+\label{tab:subsystems}
+\begin{tabular}{@{}p{2.0cm}p{5.5cm}@{}}
+\toprule
+\textbf{Subsystem} & \textbf{Responsibility} \\
+\midrule
+IoT (ESP32)        & Sense environment; publish MQTT; actuate relays \\
+Edge (RPi)         & Run all services locally; no cloud dependency \\
+MQTT Broker        & Message bus between ESP32 and backend \\
+Backend (FastAPI)  & Orchestration, REST + WebSocket APIs, business logic \\
+Real-time Layer    & Fan-out of sensor/attendance/alert events to browsers \\
+AI/Insights Layer  & At-risk detection, forecasting, SQL analytics \\
+Frontend (React)   & Professor dashboard; demo mode when offline \\
+Data Layer         & PostgreSQL (durable) + Redis (ephemeral live state) \\
+External           & Moodle LMS sync; Ollama LLM inference \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+%% ────────────────────────────────────────────────────────────────────────────
+\subsection{IoT Layer — ESP32 Firmware}
+\label{subsec:iot_layer}
+
+\subsubsection{Sensor Acquisition}
+The ESP32-WROOM-32 runs an Arduino sketch that reads four sensors on a
+5-second cycle: the DHT21 temperature/humidity sensor (GPIO~4), the
+MQ-135 air-quality ADC (GPIO~34, ADC1 channel~6), and the ACP014
+digital sound sensor (GPIO~35).  GPIO~34 and~35 are input-only pins,
+which avoids conflicts with the WiFi subsystem that disables ADC2.
+
+\subsubsection{MQTT Publishing}
+Each reading is serialised as a JSON payload
+\texttt{\{value, unit, ts\}} and published to the corresponding MQTT
+topic at QoS~0.  A heartbeat message (\texttt{status} topic, every
+30~seconds) allows the backend to detect device offline events via a
+TTL-based Redis presence key.
+
+\subsubsection{Relay Actuation and Local Auto-Control}
+The ESP32 subscribes to \texttt{classroom/room1/relay/ac} and
+\texttt{classroom/room1/relay/lighting}.  On receipt, it drives the
+corresponding GPIO output through a logic-level converter
+(3.3\,V~$\leftrightarrow$\,5\,V) to the 4-channel opto-isolated relay
+module.  An on-device auto-control flag (\texttt{acAutoMode}) implements
+temperature thresholding independently of the backend---a deliberate
+redundancy that maintains AC control if MQTT connectivity drops.
+
+Figure~\ref{fig:esp32_wiring} shows the complete GPIO wiring.
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=\linewidth]{fig02_esp32_wiring}
+  \caption{ESP32 IoT node: sensor inputs, logic-level converter, relay
+    module, and LCD~16$\times$2 wiring.}
+  \label{fig:esp32_wiring}
+\end{figure}
+
+%% ────────────────────────────────────────────────────────────────────────────
+\subsection{Edge Layer — Raspberry Pi 4B}
+\label{subsec:edge_layer}
+
+The Raspberry Pi~4B (4~GB RAM) acts as the central edge hub, running
+all Docker services on a single host.  In production, the RPi also
+hosts the RPi Camera Module~v2, which feeds the face-recognition loop
+at 2~fps via OpenCV \texttt{VideoCapture(0)}.
+
+When \texttt{FACE\_RECOGNITION\_ENABLED=false} (Docker/dev mode), a
+stub recognition loop fires synthetic attendance events using randomly
+sampled enrolled students, exercising the full bidirectional
+present$\leftrightarrow$absent evaluation logic without a physical
+camera.
+
+Figure~\ref{fig:rpi_topology} illustrates the runtime topology on the
+Raspberry Pi~4B, including all Docker service ports and the WiFi link
+to the ESP32 node.
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=\linewidth]{fig08_rpi_topology}
+  \caption{RPi~4B production runtime topology: all services and their
+    communication paths to the ESP32 classroom node and professor
+    browser.}
+  \label{fig:rpi_topology}
+\end{figure}
+
+%% ────────────────────────────────────────────────────────────────────────────
+\subsection{Communication Layer — MQTT}
+\label{subsec:mqtt_layer}
+
+\subsubsection{Topic Architecture}
+The Mosquitto~2 broker hosts a single hierarchical topic tree under the
+prefix \texttt{classroom/\{room\_id\}/}.  Table~\ref{tab:mqtt_schema}
+defines all topics, directions, and payload schemas.
+
+\begin{table}[H]
+\centering
+\caption{MQTT Topic Schema}
+\label{tab:mqtt_schema}
+\begin{tabular}{@{}p{2.8cm}p{1.1cm}p{3.6cm}@{}}
+\toprule
+\textbf{Topic suffix} & \textbf{Dir.} & \textbf{Payload / Period} \\
+\midrule
+\texttt{sensors/temperature} & ESP$\rightarrow$RPi & \texttt{\{value,unit,ts\}} · 5~s \\
+\texttt{sensors/humidity}    & ESP$\rightarrow$RPi & \texttt{\{value,unit,ts\}} · 5~s \\
+\texttt{sensors/air\_quality}& ESP$\rightarrow$RPi & \texttt{\{value,unit,ts\}} · 5~s \\
+\texttt{sensors/sound}       & ESP$\rightarrow$RPi & \texttt{\{value:0|1,ts\}} · 5~s \\
+\texttt{status}              & ESP$\rightarrow$RPi & \texttt{\{online:true,ts\}} · 30~s \\
+\texttt{relay/ac}            & RPi$\rightarrow$ESP & \texttt{\{action:on|off|auto\}} \\
+\texttt{relay/lighting}      & RPi$\rightarrow$ESP & \texttt{\{action:on|off|auto\}} \\
+\texttt{alerts}              & RPi$\rightarrow$ESP & \texttt{\{type,value\}} $\rightarrow$ LCD \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsubsection{Subscription Strategy}
+The backend subscribes using the wildcard pattern
+\texttt{classroom/+/sensors/\#} to receive sensor messages from any
+room ID and any sensor sub-topic in a single subscription.  A separate
+subscription on \texttt{classroom/+/status} handles heartbeat messages.
+ESP32 nodes subscribe to exact topics for relay commands.
+
+Figure~\ref{fig:mqtt_topics} shows the complete topic tree.
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=\linewidth]{fig03_mqtt_topic_tree}
+  \caption{MQTT topic tree under \texttt{classroom/\{room\_id\}/}.
+    Blue nodes are ESP32-published; green nodes are backend-published.}
+  \label{fig:mqtt_topics}
+\end{figure}
+
+%% ────────────────────────────────────────────────────────────────────────────
+\subsection{Backend — FastAPI Application}
+\label{subsec:backend}
+
+The backend is organised into seven logical service groups.
+Figure~\ref{fig:backend_modules} shows their connections.
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=\linewidth]{fig04_backend_modules}
+  \caption{Backend internal module groups and their data-flow
+    connections.}
+  \label{fig:backend_modules}
+\end{figure}
+
+\textbf{Group~1 — Ingestion \& Real-time} (\texttt{mqtt\_bridge.py}).
+A persistent \texttt{aiomqtt.Client} subscriber loop connects to
+Mosquitto with exponential backoff.  On each sensor message: (i)~Redis
+SET with 5-minute TTL, (ii)~fire-and-forget PostgreSQL write,
+(iii)~non-blocking put to \texttt{sensor\_event\_queue}.  Three
+\texttt{asyncio.Queue} instances decouple producers from WebSocket
+consumers.
+
+\textbf{Group~2 — Session \& Attendance} (\texttt{api/sessions.py},
+\texttt{recognition\_loop.py}).  Session lifecycle: \texttt{POST
+/api/sessions/start} activates the recognition loop; \texttt{POST
+/api/sessions/\{id\}/end} stops it, runs the final evaluation cycle,
+and triggers Moodle sync.  Manual adjustments via
+\texttt{PATCH /api/attendance/\{id\}} set \texttt{adjusted\_by} to
+prevent overwrite by the recognition loop.
+
+\textbf{Group~3 — Control} (\texttt{api/control.py}).  Relay commands
+simultaneously write Redis (instant dashboard state) and publish MQTT
+(device actuation).  Redis is the authoritative relay state; PostgreSQL
+is not used for relay records.
+
+\textbf{Group~4 — Alert Engine} (\texttt{services/alert\_engine.py}).
+An \texttt{AsyncIOScheduler} job runs every 30~seconds, reads the Redis
+sensor cache, evaluates thresholds (Table~\ref{tab:auto_control}), and
+upserts \texttt{alerts} rows.  Deduplication prevents duplicate alerts
+for the same unacknowledged condition.
+
+\textbf{Group~5 — Insights \& Analytics.}  Pure SQL analytics: weekly
+trend, day/hour heatmap, comfort score, AC effectiveness, temperature
+versus attendance scatter, air-quality versus sound correlation.
+Role-filtered: professors see only their courses.
+
+\textbf{Group~6 — AI Pipelines} (Section~\ref{sec:ai}).
+
+\textbf{Group~7 — Auth} (\texttt{api/auth.py}).  JWT (HS256), bcrypt
+passwords, role-based access control; \texttt{REQUIRE\_AUTH=false} in
+development.
+
+\begin{table}[H]
+\centering
+\caption{Auto-Control Rules}
+\label{tab:auto_control}
+\begin{tabular}{@{}p{1.6cm}p{2.4cm}p{3.5cm}@{}}
+\toprule
+\textbf{Sensor} & \textbf{Condition} & \textbf{Action} \\
+\midrule
+Temperature & $> 28$\,°C + AC in auto & Turn AC ON \\
+Temperature & $< 22$\,°C + AC in auto & Turn AC OFF \\
+Air quality & $> 500$~ppm            & Alert (no relay) \\
+Sound       & Silent $> 30$~min (active session) & Attendance anomaly alert \\
+Device      & Heartbeat TTL expired  & Device-offline alert \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[H]
+\centering
+\caption{APScheduler Job Inventory}
+\label{tab:scheduler_jobs}
+\begin{tabular}{@{}p{2.8cm}p{1.1cm}p{3.6cm}@{}}
+\toprule
+\textbf{Job} & \textbf{Interval} & \textbf{Purpose} \\
+\midrule
+\texttt{check\_thresholds} & 30~s & Sensor threshold evaluation, relay auto-control, alert creation \\
+\texttt{retry\_moodle\_sync} & 10~min & Re-send up to 10 queued session IDs to Moodle \\
+\texttt{mock\_sensor\_publish} & 5~s & (\texttt{MOCK\_MODE}) Synthetic MQTT sensor messages \\
+\texttt{mock\_heartbeat} & 30~s & (\texttt{MOCK\_MODE}) Synthetic status heartbeat \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Table~\ref{tab:api_endpoints} lists the primary REST endpoints.
+
+\begin{table}[H]
+\centering
+\caption{Primary REST API Endpoints}
+\label{tab:api_endpoints}
+\begin{tabular}{@{}p{0.8cm}p{3.8cm}p{2.9cm}@{}}
+\toprule
+\textbf{Method} & \textbf{Path} & \textbf{Description} \\
+\midrule
+GET  & \texttt{/api/sensors/latest}            & Latest sensor values (Redis) \\
+GET  & \texttt{/api/sensors/history}           & Time-range history (PG) \\
+POST & \texttt{/api/sessions/start}            & Create + start session \\
+POST & \texttt{/api/sessions/\{id\}/end}       & End session, sync Moodle \\
+POST & \texttt{/api/control/ac}                & Set AC relay state \\
+POST & \texttt{/api/control/lighting}          & Set lighting relay state \\
+GET  & \texttt{/api/sessions/\{id\}/attendance}& Attendance roster \\
+PATCH& \texttt{/api/attendance/\{id\}}         & Manual adjustment \\
+POST & \texttt{/api/students/\{id\}/enroll-face}& Face enrollment \\
+GET  & \texttt{/api/at-risk}                   & At-risk list + trigger pipeline \\
+GET  & \texttt{/api/forecasting}               & Forecast list + trigger pipeline \\
+WS   & \texttt{/ws/classroom/\{room\_id\}}     & Live event stream \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+%% ────────────────────────────────────────────────────────────────────────────
+\subsection{Real-Time Layer — WebSocket}
+\label{subsec:websocket}
+
+Figure~\ref{fig:ws_fanout} shows the asyncio fan-out mechanism.  Three
+background drain tasks loop indefinitely, pulling events from their
+respective queues and calling \texttt{connection\_manager.broadcast(room\_id,
+event)}.  The \texttt{ConnectionManager} maintains a
+\texttt{dict[room\_id $\rightarrow$ set[WebSocket]]} for room-scoped
+delivery.
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=\linewidth]{fig05_websocket_fanout}
+  \caption{Event fan-out: three asyncio queues drain independently into
+    the WebSocket broadcast layer.}
+  \label{fig:ws_fanout}
+\end{figure}
+
+On connect, the server immediately sends a \texttt{snapshot} message
+containing current Redis sensor values, relay states, and device-online
+status, ensuring the dashboard is never blank on page load.  A
+30-second server-side keepalive (ping/pong) detects stale connections.
+The frontend reconnects with exponential backoff (3~s initial, 30~s
+cap).  Table~\ref{tab:ws_messages} defines all WebSocket message types.
+
+\begin{table}[H]
+\centering
+\caption{WebSocket Message Types (Server $\rightarrow$ Client)}
+\label{tab:ws_messages}
+\begin{tabular}{@{}p{1.5cm}p{2.4cm}p{3.6cm}@{}}
+\toprule
+\textbf{Type} & \textbf{Trigger} & \textbf{Payload fields} \\
+\midrule
+\texttt{snapshot}   & On connect       & sensors, relay, device\_online \\
+\texttt{sensor}     & MQTT ingestion   & room\_id, sensor\_type, value, unit \\
+\texttt{attendance} & Recognition match & session\_id, student\_id, name, confidence, status \\
+\texttt{alert}      & Threshold breach & alert\_type, room\_id, message, value \\
+\texttt{ping}       & 30~s keepalive   & — \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+%% ────────────────────────────────────────────────────────────────────────────
+\subsection{Data Layer}
+\label{subsec:data_layer}
+
+\subsubsection{PostgreSQL Schema}
+The database contains nine tables.
+Figure~\ref{fig:er_diagram} shows the entity-relationship diagram.
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=\linewidth]{fig06_er_diagram}
+  \caption{Entity-relationship diagram for all nine database tables.}
+  \label{fig:er_diagram}
+\end{figure}
+
+Table~\ref{tab:db_schema} summarises each table's purpose and key
+design decisions.
+
+\begin{table}[H]
+\centering
+\caption{Database Schema Summary}
+\label{tab:db_schema}
+\begin{tabular}{@{}p{2.5cm}p{5.0cm}@{}}
+\toprule
+\textbf{Table} & \textbf{Key Design Points} \\
+\midrule
+\texttt{professors}        & UUID PK, bcrypt password, role ENUM (professor|admin) \\
+\texttt{students}          & UUID PK, UNIQUE institutional student\_id \\
+\texttt{courses}           & UUID PK, UNIQUE code, nullable professor FK \\
+\texttt{sessions}          & display\_status computed (not stored) to reflect live state \\
+\texttt{attendance\_records} & adjusted\_by guard: recognition loop never overwrites manual changes \\
+\texttt{face\_encodings}   & 128-d float32 BYTEA; no raw images stored \\
+\texttt{sensor\_readings}  & Time-series; queried for history and AI pipeline sensor averages \\
+\texttt{at\_risk\_explanations} & UNIQUE student\_id; per\_course\_data as JSONB \\
+\texttt{attendance\_forecasts} & UNIQUE course\_id; VARCHAR(30) for classification, not PG ENUM \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Key schema decisions: \texttt{display\_status} is computed at query time
+because session liveness changes over time without a write.
+\texttt{per\_course\_data} is JSONB because it is always read/written as
+a unit with the parent row.  \texttt{trend\_classification} uses
+\texttt{VARCHAR(30)} instead of a PostgreSQL ENUM to avoid
+non-transactional \texttt{ALTER TYPE ADD VALUE} DDL on schema evolution.
+
+\subsubsection{Redis Key Patterns}
+Table~\ref{tab:redis_keys} defines all Redis key patterns, their
+semantics, and TTL behaviour.
+
+\begin{table}[H]
+\centering
+\caption{Redis Key Patterns}
+\label{tab:redis_keys}
+\begin{tabular}{@{}p{3.0cm}p{1.5cm}p{3.0cm}@{}}
+\toprule
+\textbf{Key pattern} & \textbf{TTL} & \textbf{Semantics} \\
+\midrule
+\texttt{classroom:\{r\}:sensors:\{t\}} & 300~s & Latest sensor value for type \texttt{t} \\
+\texttt{classroom:\{r\}:online}        & 60~s  & Device presence (heartbeat-renewed) \\
+\texttt{classroom:\{r\}:relay:\{d\}}   & None  & Relay state; persists across restarts \\
+\texttt{at\_risk:pipeline:lock}        & 600~s & Prevents concurrent pipeline runs \\
+\texttt{forecast:pipeline:lock}        & 1800~s & Prevents concurrent forecast runs \\
+Moodle retry list                      & None  & Session IDs awaiting Moodle sync \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+%% ────────────────────────────────────────────────────────────────────────────
+\subsection{Frontend — React Dashboard}
+\label{subsec:frontend}
+
+The frontend is a single-page application (React~18, Vite, React
+Router~v6).  Two context providers supply global state:
+\texttt{AuthContext} (JWT token, professor profile) and
+\texttt{SensorContext} (wrapping the \texttt{useLiveSensors} hook that
+manages the WebSocket connection and demo-mode fallback).
+
+The design system separates tokens from component classes:
+\texttt{tokens.css} defines all CSS custom properties (colours,
+spacing, radius, typography); \texttt{index.css} uses those variables
+in component class rules.  TailwindCSS~v3 utility classes coexist but
+cannot resolve CSS custom properties at build time, making the token
+file split necessary.
+
+Figures~\ref{fig:dashboard}--\ref{fig:control} show the three primary
+professor-facing views.
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=\linewidth]{screenshot_dashboard}
+  \caption{Dashboard page: live sensor sparklines, session control, and
+    relay status cards.}
+  \label{fig:dashboard}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=\linewidth]{screenshot_attendance}
+  \caption{Attendance page: per-student status table with manual
+    adjustment capability.}
+  \label{fig:attendance}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=\linewidth]{screenshot_control}
+  \caption{Control page: relay toggle controls with live sensor summary
+    cards.}
+  \label{fig:control}
+\end{figure}
+
+%% ────────────────────────────────────────────────────────────────────────────
+\subsection{External Integrations}
+\label{subsec:external}
+
+\textbf{Moodle 4.x.}  The optional Moodle integration calls the Moodle
+REST API (token-authenticated) on session end to write attendance
+records.  Failures are enqueued in Redis; the alert engine retries up
+to 10 items every 10~minutes.  Moodle runs as an optional Docker Compose
+profile to avoid adding 600~MB of container weight to the default
+development environment.
+
+\textbf{Ollama / phi3-mini.}  The Ollama service exposes a REST API at
+\texttt{http://ollama:11434}.  On backend startup, an async background
+task checks for the phi3:mini model via \texttt{GET /api/tags} and pulls
+it (\texttt{POST /api/pull}) if absent---a non-blocking operation that
+takes approximately 2~GB of download on first run.  Both AI pipelines
+share a single \texttt{httpx.AsyncClient} to reuse TCP connections and
+avoid per-call TCP handshake overhead.
+
+%% ────────────────────────────────────────────────────────────────────────────
+\subsection{Deployment Architecture}
+\label{subsec:deployment}
+
+Figure~\ref{fig:docker_compose} shows the Docker Compose service
+dependency graph.  PostgreSQL and Redis must pass health checks before
+the backend starts.  The frontend starts after the backend is running,
+so that the nginx proxy target is always reachable.
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=\linewidth]{fig07_docker_compose}
+  \caption{Docker Compose service graph showing dependency order and
+    container image sources.}
+  \label{fig:docker_compose}
+\end{figure}
+
+Alembic migrations run automatically in the FastAPI lifespan context
+(\texttt{upgrade head}) before any API routes are registered, ensuring
+schema currency on every container restart without a manual migration
+step.
+
+%% ────────────────────────────────────────────────────────────────────────────
+\subsection{Key Architectural Decisions}
+\label{subsec:arch_decisions}
+
+Table~\ref{tab:arch_decisions} captures the most significant
+non-obvious architectural choices and their rationale.
+
+\begin{table}[H]
+\centering
+\caption{Key Architectural Decisions}
+\label{tab:arch_decisions}
+\begin{tabular}{@{}p{2.5cm}p{5.0cm}@{}}
+\toprule
+\textbf{Decision} & \textbf{Rationale} \\
+\midrule
+FastAPI over Flask          & Native async for WebSocket + MQTT concurrent I/O \\
+All services on RPi         & Avoids latency, cost, and internet dependency \\
+asyncio-mqtt $\rightarrow$ aiomqtt & paho-mqtt~v2 broke the asyncio-mqtt API \\
+DeepFace stub in Docker     & TensorFlow adds $\sim$600~MB; causes OOM on dev laptops \\
+Redis for sensor state      & Sub-millisecond read on page load; no PostgreSQL hit \\
+\texttt{display\_status} computed & Liveness is time-relative; storing it would require continuous writes \\
+\texttt{tokens.css} split   & TailwindCSS~v3 cannot resolve CSS vars at build time \\
+Glassmorphism removed       & GPU-expensive; caused rendering artifacts in Chrome \\
+Inline SVG icons            & No icon-library dependency; only 10--12 icons needed \\
+\texttt{per\_course\_data} JSONB & Always read/written as a unit; avoids join \\
+Redis TTL not deleted on completion & Prevents re-run on every page refresh (natural cooldown) \\
+1~LLM call/student          & N+1 calls: 14--16~min; batched: 2--3~min \\
+Deterministic classification & LLM labels are unreliable for structured values; delta math is deterministic \\
+\texttt{VARCHAR(30)} not PG ENUM & \texttt{ALTER TYPE ADD VALUE} is non-transactional in PostgreSQL \\
+Marker rows ($<3$ sessions)  & Without a row, the frontend poll condition never resolves \\
+No Redis cooldown in webcam endpoint & \texttt{last\_posted\_status} in the laptop script is the dedup layer; backend cooldown silently dropped transitions \\
+\bottomrule
+\end{tabular}
+\end{table}

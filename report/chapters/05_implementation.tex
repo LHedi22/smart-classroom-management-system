@@ -1,0 +1,271 @@
+%% ════════════════════════════════════════════════════════════════════════════
+\section{Implementation}
+\label{sec:implementation}
+%% ════════════════════════════════════════════════════════════════════════════
+
+\subsection{Development Methodology and Task Management}
+\label{subsec:methodology}
+
+The project followed an Agile-inspired iterative delivery model,
+organised into 22 numbered phases spanning hardware assembly, firmware,
+backend services, frontend, Docker deployment, and AI analytics.  Each
+phase had a clear definition of done and was tracked on a shared Notion
+board.  Figure~\ref{fig:notion} shows the task board at the time of
+final submission.
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=\linewidth]{screenshot_notion}
+  \caption{Notion project board: phase breakdown, assignee tracking,
+    and completion status.}
+  \label{fig:notion}
+\end{figure}
+
+Table~\ref{tab:phases} shows the 22 delivery phases and their
+completion status.
+
+\begin{table}[H]
+\centering
+\caption{Phase Completion Status}
+\label{tab:phases}
+\begin{tabular}{@{}p{0.6cm}p{6.6cm}p{0.5cm}@{}}
+\toprule
+\textbf{Ph.} & \textbf{Description} & \textbf{Done} \\
+\midrule
+0  & Project scaffolding, Docker Compose, env setup         & \checkmark \\
+1  & ESP32 firmware — sensors + MQTT publish                & \checkmark \\
+2  & Backend foundation — FastAPI, DB models, MQTT bridge   & \checkmark \\
+3  & Face recognition service + enrollment API              & \checkmark \\
+4  & Session management + attendance engine                 & \checkmark \\
+5  & Control API + alert engine                             & \checkmark \\
+6  & Moodle sync service                                    & \checkmark \\
+7  & WebSocket live streaming                               & \checkmark \\
+8  & React frontend                                         & \checkmark \\
+9  & Integration testing + documentation                    & \checkmark \\
+10 & Full Docker deployment — nginx, Mosquitto wiring       & \checkmark \\
+11 & Mock data fallback — backend + frontend demo mode      & \checkmark \\
+12 & Raspberry Pi setup runbook                             & \checkmark \\
+13 & Demo data seed script                                  & \checkmark \\
+14 & JWT auth, professors table, role-based filtering       & \checkmark \\
+15 & Docker image slim — stub mode, self-migrating seed     & \checkmark \\
+16 & Professor Dashboard — sensor sparklines, session list  & \checkmark \\
+17 & Dashboard bug fixes — enrolled count, key resets       & \checkmark \\
+18 & Full frontend visual redesign — CSS token system       & \checkmark \\
+19 & At-Risk Explanation — Ollama/phi3-mini pipeline        & \checkmark \\
+20 & At-Risk pipeline performance optimisation              & \checkmark \\
+21 & LLM-Assisted Forecasting + Recharts trend chart        & \checkmark \\
+22 & Snapshot-per-cycle attendance; laptop mode conflict fix& \checkmark \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Hardware Assembly}
+\label{subsec:hardware}
+
+Table~\ref{tab:hardware_bom} lists the bill of materials.  All
+components interface to either the ESP32 or the Raspberry Pi~4B.
+
+\begin{table}[H]
+\centering
+\caption{Hardware Bill of Materials}
+\label{tab:hardware_bom}
+\begin{tabular}{@{}p{2.5cm}p{4.8cm}@{}}
+\toprule
+\textbf{Component} & \textbf{Role} \\
+\midrule
+Raspberry Pi~4B 4~GB  & Central hub; runs all Docker services and camera \\
+RPi Camera Module~v2  & 8~MP camera input for face recognition \\
+ESP32 WROOM-32        & Sensor node + relay controller via MQTT \\
+DHT21 (AM2301)        & Temperature and humidity (GPIO~4) \\
+MQ-135                & Air quality / CO$_2$ proxy (ADC GPIO~34) \\
+ACP014 Sound Sensor   & Binary occupancy/noise detection (GPIO~35) \\
+4-Channel Relay       & AC (CH1), lighting (CH2), spare (CH3/4) \\
+LCD 16$\times$2 I2C   & Local room status display (I2C GPIO~21/22) \\
+Logic Level Converter & 3.3\,V $\leftrightarrow$ 5\,V: ESP32 to relay \\
+USB-C 5\,V 3\,A PSU  & Raspberry Pi power supply \\
+32~GB MicroSD         & RPi OS and Docker volume storage \\
+Breadboard + wires    & Prototyping connections \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The critical wiring consideration is the logic-level converter between
+the ESP32 (3.3\,V logic) and the relay module (5\,V TTL inputs).
+Driving the relay directly from the ESP32 GPIO would result in
+unreliable switching, as the relay's opto-isolator threshold is
+nominally 5\,V.  The converter's low-voltage side connects to ESP32
+GPIO~26--27 (relay CH1/CH2), and the high-voltage side feeds the relay
+IN pins.
+
+Figure~\ref{fig:rpi4b} shows the Raspberry Pi~4B with the camera
+module attached.
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.85\linewidth]{photo_rpi4b}
+  \caption{Raspberry Pi~4B with Camera Module~v2 mounted.  The RPi
+    hosts all backend services and the face recognition loop.}
+  \label{fig:rpi4b}
+\end{figure}
+
+\subsection{Firmware Development (ESP32)}
+\label{subsec:firmware}
+
+The Arduino sketch (\texttt{classroom\_node.ino}) implements a
+polling loop: every 5~seconds it reads all sensors, constructs JSON
+payloads, and publishes each to its MQTT topic.  Configuration
+parameters (WiFi SSID/password, MQTT broker IP, room ID, threshold
+values) are centralised in \texttt{config.h} so deployment to a new
+classroom requires only editing that file and re-flashing.
+
+MQTT reconnection is handled by a \texttt{reconnect()} function called
+from \texttt{loop()} whenever \texttt{client.connected()} returns false,
+with a 5-second back-off delay between attempts.  The LCD displays live
+temperature, humidity, air quality, and sound status on alternating
+lines, providing local room status without requiring the professor to
+access the dashboard.
+
+\subsection{Backend Development}
+\label{subsec:backend_dev}
+
+\textbf{Project structure.}  The backend follows a flat service
+architecture under \texttt{backend/app/}: \texttt{api/} for route
+handlers, \texttt{services/} for business logic, \texttt{models/} for
+SQLAlchemy ORM models and Pydantic schemas, and top-level
+\texttt{main.py}, \texttt{config.py}, \texttt{database.py}, and
+\texttt{redis\_client.py}.
+
+\textbf{Database initialisation.}  Alembic auto-migration runs on
+startup via a subprocess call (\texttt{alembic upgrade head}) inside the
+FastAPI lifespan context manager.  This ensures the schema is always
+current without a separate migration step.
+
+\textbf{MQTT bridge.}  The \texttt{aiomqtt} bridge runs as an
+\texttt{asyncio.Task}, maintaining a persistent subscription to
+\texttt{classroom/+/sensors/\#} and \texttt{classroom/+/status}.
+Exponential back-off reconnection (initial 1~s, max 60~s) handles
+Mosquitto restarts.
+
+\textbf{Environment variables.}  Table~\ref{tab:env_vars} lists the
+primary configuration variables.
+
+\begin{table}[H]
+\centering
+\caption{Primary Environment Variables}
+\label{tab:env_vars}
+\begin{tabular}{@{}p{3.2cm}p{4.3cm}@{}}
+\toprule
+\textbf{Variable} & \textbf{Description and Default} \\
+\midrule
+\texttt{DATABASE\_URL}            & PostgreSQL async connection string \\
+\texttt{REDIS\_URL}               & Redis connection URL \\
+\texttt{MQTT\_BROKER\_HOST}       & Mosquitto hostname (default: \texttt{mosquitto}) \\
+\texttt{ROOM\_ID}                 & Active room identifier (default: \texttt{room1}) \\
+\texttt{MOCK\_MODE}               & \texttt{true}: synthetic MQTT without ESP32 \\
+\texttt{FACE\_RECOGNITION\_ENABLED} & \texttt{true}: real camera + DeepFace (RPi only) \\
+\texttt{SECRET\_KEY}              & JWT signing key — must be replaced in production \\
+\texttt{REQUIRE\_AUTH}            & \texttt{false} in dev; \texttt{true} in production \\
+\texttt{AT\_RISK\_THRESHOLD}      & Attendance rate below which a student is at-risk (default: 0.70) \\
+\texttt{ATTENDANCE\_CYCLE\_DURATION} & Seconds per scan-evaluate cycle (default: 60) \\
+\texttt{OLLAMA\_BASE\_URL}        & Ollama service URL (default: \texttt{http://ollama:11434}) \\
+\texttt{FORECAST\_WINDOW}         & Past sessions included in trend (default: 8) \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Face Recognition Pipeline}
+\label{subsec:recognition}
+
+Figure~\ref{fig:face_recog} shows the complete enrollment and
+recognition flow.
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=\linewidth]{fig10_face_recognition_flow}
+  \caption{Enrollment and recognition pipeline: from image upload to
+    attendance record creation.}
+  \label{fig:face_recog}
+\end{figure}
+
+\textbf{Enrollment.}  The professor uploads up to five reference images
+per student via the Enrollment page (Figure~\ref{fig:enrollment}).
+Each image is passed to DeepFace's \texttt{represent()} function with
+the FaceNet backend, producing a 128-dimensional float32 embedding.
+The per-image embeddings are averaged and stored as a BYTEA column in
+the \texttt{face\_encodings} table.  No raw images are retained.
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=\linewidth]{screenshot_enrollment}
+  \caption{Enrollment page: student registration and face image
+    upload.}
+  \label{fig:enrollment}
+\end{figure}
+
+\textbf{Recognition loop — snapshot-per-cycle model.}  While a session
+is active, a background \texttt{asyncio.Task} runs the recognition loop:
+\begin{enumerate}
+  \item \textbf{SCAN phase} (duration: \texttt{ATTENDANCE\_CYCLE\_DURATION}
+    seconds at \texttt{RECOGNITION\_FPS} fps): capture frames, compare
+    each detected face embedding against all stored embeddings using
+    cosine distance.  Any student whose distance falls below 0.40 is
+    added to \texttt{seen\_this\_cycle}.
+
+  \item \textbf{EVALUATE phase} (single transaction): for every enrolled
+    student --- if in \texttt{seen\_this\_cycle}: mark present; if not:
+    mark absent.  Records where \texttt{adjusted\_by IS NOT NULL} are
+    never touched.
+\end{enumerate}
+
+This bidirectional model captures students who leave mid-session, which
+the original one-shot model missed.
+
+\subsection{Frontend Development}
+\label{subsec:frontend_dev}
+
+The frontend is scaffolded with Vite and React~18.  The
+\texttt{useLiveSensors} hook manages the WebSocket lifecycle, the demo-mode
+watchdog, and message dispatch to their respective React state slices.
+If no WebSocket data arrives within 8~seconds of connecting, the hook
+activates a client-side mock generator and renders the
+\texttt{DemoModeBanner}, allowing professors to review the interface
+without a running backend.
+
+Recharts \texttt{AreaChart} with \texttt{linearGradient} fill renders
+the sensor sparklines on the dashboard.  The forecasting page adds a
+70\% dashed \texttt{ReferenceLine} and optionally appends a projected
+``Next'' data point to the trend series.
+
+\subsection{Infrastructure and Deployment}
+\label{subsec:infra}
+
+The full stack is containerised with Docker Compose.  The backend
+container builds from a custom image with DeepFace and TensorFlow
+excluded (stub mode only), reducing the image from approximately 3~GB
+to under 800~MB.  Named Docker volumes persist PostgreSQL data, Redis
+data, Mosquitto broker state, and the Ollama model cache across
+container restarts.
+
+The nginx container serves the React static files on port~3000 and
+proxies all \texttt{/api/*} and \texttt{/ws/*} requests to the FastAPI
+backend at port~8000, making the backend never directly exposed to the
+LAN.
+
+\subsection{Seed Data and Demo Environment}
+\label{subsec:seed}
+
+The \texttt{seed.py} script runs Alembic migrations first, then
+populates the database with 35 students, 6 courses, 5 professors, and
+30 past sessions with synthetic attendance records.  Running the stack
+with \texttt{MOCK\_MODE=true} activates the sine-wave sensor publisher,
+making all dashboard charts and sparklines live without an ESP32.
+Figure~\ref{fig:swagger} shows the FastAPI Swagger UI used during
+backend development and integration testing.
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=\linewidth]{screenshot_swagger}
+  \caption{FastAPI Swagger UI (\texttt{/docs}): interactive API
+    explorer used for endpoint validation during development.}
+  \label{fig:swagger}
+\end{figure}

@@ -1,8 +1,8 @@
 #pragma once
 
 // ── WiFi ─────────────────────────────────────────────────────────────────
-#define WIFI_SSID     "Ooredoo-327065-5G"
-#define WIFI_PASSWORD "BFB68D59Er@07"
+#define WIFI_SSID     "Test1234"
+#define WIFI_PASSWORD "test1234"
 
 // ─── LAPTOP MODE ──────────────────────────────────────────────────────────────
 // To run the system from a laptop instead of the Raspberry Pi:
@@ -13,7 +13,7 @@
 //   3. Re-flash this firmware to the ESP32.
 //   4. Make sure your laptop's firewall allows inbound TCP on port 1883.
 // ─────────────────────────────────────────────────────────────────────────────
-#define MQTT_HOST "192.168.0.168"
+#define MQTT_HOST "10.169.33.142"
 #define MQTT_PORT 1883
 #define MQTT_CLIENT_ID "esp32-room1"
 

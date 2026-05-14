@@ -1,0 +1,154 @@
+%% ════════════════════════════════════════════════════════════════════════════
+\section{Requirements Analysis}
+\label{sec:requirements}
+%% ════════════════════════════════════════════════════════════════════════════
+
+\subsection{Stakeholder Analysis}
+\label{subsec:stakeholders}
+
+Four stakeholder groups were identified during the requirements elicitation
+phase:
+
+\begin{itemize}
+  \item \textbf{Professors (primary users).}  Professors start and end
+    sessions, view live sensor and attendance data, manually adjust
+    attendance records, control AC and lighting, and acknowledge alerts.
+    Their primary goal is to recover the 15~minutes per lecture lost to
+    manual roll-call.
+
+  \item \textbf{Students (indirect beneficiaries).}  Students benefit
+    from more accurate attendance records and improved classroom comfort
+    resulting from automated environmental control.  They do not
+    interact with the system directly.
+
+  \item \textbf{Administration (secondary users).}  Administrators have
+    access to aggregated attendance and at-risk data across all courses,
+    enabling resource optimisation and compliance reporting.  They can
+    trigger AI pipeline recomputation on demand.
+
+  \item \textbf{Advising department (data consumers).}  Academic advisers
+    use the at-risk dashboard to initiate early interventions before
+    students miss the withdrawal deadline.
+\end{itemize}
+
+\subsection{Functional Requirements}
+\label{subsec:func_req}
+
+Table~\ref{tab:func_req} lists the functional requirements grouped by
+subsystem.
+
+\begin{table}[H]
+\centering
+\caption{Functional Requirements}
+\label{tab:func_req}
+\begin{tabular}{@{}p{0.7cm}p{2.2cm}p{4.6cm}@{}}
+\toprule
+\textbf{ID} & \textbf{Subsystem} & \textbf{Requirement} \\
+\midrule
+FR01 & Attendance  & System shall recognise enrolled students from camera frames during an active session. \\
+FR02 & Attendance  & System shall record attendance status (present/absent/late) per session per student. \\
+FR03 & Attendance  & System shall allow professors to manually adjust any attendance record. \\
+FR04 & Attendance  & System shall fill absent status for all enrolled students not detected at session end. \\
+FR05 & Attendance  & System shall implement bidirectional present\,$\leftrightarrow$\,absent evaluation every cycle. \\
+FR06 & Attendance  & System shall never overwrite manually adjusted records. \\
+\midrule
+FR07 & Environment & System shall publish temperature and humidity every 5~seconds. \\
+FR08 & Environment & System shall publish air-quality (ppm proxy) every 5~seconds. \\
+FR09 & Environment & System shall publish binary sound detection every 5~seconds. \\
+FR10 & Environment & System shall persist sensor readings to a time-series database. \\
+\midrule
+FR11 & Control     & System shall allow professors to set AC to on/off/auto via dashboard. \\
+FR12 & Control     & System shall automatically activate AC when temperature exceeds 28\,°C in auto mode. \\
+FR13 & Control     & System shall allow professors to set lighting to on/off/auto via dashboard. \\
+\midrule
+FR14 & Dashboard   & System shall display live sensor readings with less than 5~seconds end-to-end latency. \\
+FR15 & Dashboard   & System shall display current session attendance roster in real time. \\
+FR16 & Dashboard   & System shall display active alerts with acknowledgement capability. \\
+FR17 & Dashboard   & System shall operate in demo mode when backend is unreachable. \\
+\midrule
+FR18 & Alerts      & System shall alert when temperature exceeds 28\,°C or falls below 22\,°C. \\
+FR19 & Alerts      & System shall alert when air-quality exceeds 500~ppm. \\
+FR20 & Alerts      & System shall alert when the ESP32 device goes offline. \\
+\midrule
+FR21 & LMS Sync    & System shall synchronise attendance to Moodle on session end. \\
+FR22 & LMS Sync    & System shall retry failed Moodle syncs on a scheduled basis. \\
+\midrule
+FR23 & AI          & System shall identify students below 70\% attendance as at-risk. \\
+FR24 & AI          & System shall generate natural-language explanations for at-risk students using a local LLM. \\
+FR25 & AI          & System shall classify per-course attendance trends deterministically. \\
+FR26 & AI          & System shall generate LLM-assisted prose interpretations for attendance forecasts. \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Non-Functional Requirements}
+\label{subsec:nonfunc_req}
+
+Table~\ref{tab:nonfunc_req} presents the non-functional requirements.
+
+\begin{table}[H]
+\centering
+\caption{Non-Functional Requirements}
+\label{tab:nonfunc_req}
+\begin{tabular}{@{}p{0.7cm}p{2.0cm}p{4.8cm}@{}}
+\toprule
+\textbf{ID} & \textbf{Category} & \textbf{Requirement} \\
+\midrule
+NF01 & Performance  & Sensor update round-trip (ESP32 → dashboard) shall be $\leq$\,5~seconds. \\
+NF02 & Performance  & API response time for non-AI endpoints shall be $\leq$\,500~ms under normal load. \\
+NF03 & Performance  & At-risk pipeline shall complete in $\leq$\,5~minutes for up to 10 at-risk students. \\
+\midrule
+NF04 & Availability & System shall operate without internet access during normal classroom use. \\
+\midrule
+NF05 & Security     & Professor authentication shall use bcrypt-hashed passwords and JWT tokens. \\
+NF06 & Security     & Role-based access control shall restrict admin endpoints to admin-role accounts. \\
+NF07 & Security     & Face embeddings shall not be stored as raw images; only 128-d BYTEA arrays are persisted. \\
+\midrule
+NF08 & Scalability  & Architecture shall support extension to multiple rooms by changing the \texttt{ROOM\_ID} environment variable and replicating the ESP32 node. \\
+\midrule
+NF09 & Resilience   & MQTT bridge shall reconnect with exponential backoff on broker restart. \\
+NF10 & Resilience   & Frontend shall activate demo mode with client-side mock data after 8~seconds without WebSocket data. \\
+NF11 & Resilience   & AI pipelines shall set \texttt{ollama\_reachable=false} and continue without crashing when Ollama is unavailable. \\
+\midrule
+NF12 & Usability    & All professor-facing interactions (start session, relay control, alert ack) shall require $\leq$\,2 clicks. \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Use Case Overview}
+\label{subsec:usecases}
+
+Figure~\ref{fig:use_case} illustrates the primary actors and use cases.
+The Professor actor initiates all classroom-level interactions; the Admin
+actor adds AI pipeline control; the ESP32 Node autonomously publishes
+sensor data; and Moodle receives attendance records at session end.
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=\linewidth]{fig09_use_case}
+  \caption{Use case diagram showing four actors and twelve use cases.}
+  \label{fig:use_case}
+\end{figure}
+
+The critical use case sequence for a normal lecture is:
+(1)~Professor starts session $\rightarrow$ (2)~Face recognition loop
+activates $\rightarrow$ (3)~Attendance records update live on dashboard
+$\rightarrow$ (4)~Professor ends session $\rightarrow$ (5)~Final absent
+fill runs $\rightarrow$ (6)~Attendance syncs to Moodle.
+
+\subsection{Constraints}
+\label{subsec:constraints}
+
+\textbf{Hardware constraints.}  The Raspberry Pi~4B (4~GB RAM) is the
+sole compute node.  Face recognition is limited to 2~fps; phi3-mini
+inference runs at 10--30~seconds per student on CPU.
+
+\textbf{Budget constraints.}  Total hardware cost is approximately
+\$150~USD, including the RPi~4B, ESP32, sensors, relay module, and
+camera.  See Table~\ref{tab:hardware_bom} in
+Section~\ref{subsec:hardware} for the detailed bill of materials.
+
+\textbf{Timeline constraint.}  The project was delivered within one
+academic semester (22 weeks, 22 phases).  Features deferred to future
+work include multi-room support, HTTPS/WSS, and quantised GGUF model
+inference.

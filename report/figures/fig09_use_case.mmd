@@ -1,0 +1,39 @@
+graph LR
+    Prof(["fa:fa-user Professor"])
+    Admin(["fa:fa-user-shield Admin"])
+    ESP(["fa:fa-microchip ESP32 Node"])
+    Moodle(["fa:fa-graduation-cap Moodle LMS"])
+
+    subgraph sys["Smart Classroom Management System"]
+        UC1(["Start / End Session"])
+        UC2(["View Live Dashboard"])
+        UC3(["Control AC and Lighting"])
+        UC4(["View Attendance Records"])
+        UC5(["Adjust Attendance Manually"])
+        UC6(["View At-Risk Students"])
+        UC7(["View Attendance Forecast"])
+        UC8(["Enroll Student Face"])
+        UC9(["Acknowledge Alert"])
+        UC10(["Publish Sensor Data"])
+        UC11(["Sync Attendance to LMS"])
+        UC12(["Recompute AI Pipelines"])
+    end
+
+    Prof --> UC1
+    Prof --> UC2
+    Prof --> UC3
+    Prof --> UC4
+    Prof --> UC5
+    Prof --> UC6
+    Prof --> UC7
+    Prof --> UC8
+    Prof --> UC9
+    Admin --> UC6
+    Admin --> UC7
+    Admin --> UC12
+    ESP --> UC10
+    UC1 -.->|"triggers"| UC11
+    UC11 --> Moodle
+
+    classDef actor fill:#fef3c7,stroke:#d97706,shape:circle
+    classDef uc fill:#eff6ff,stroke:#3b82f6

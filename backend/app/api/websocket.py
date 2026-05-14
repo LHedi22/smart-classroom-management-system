@@ -33,8 +33,13 @@ class ConnectionManager:
 
     async def broadcast(self, room_id: str, payload: dict[str, Any]) -> None:
         message = json.dumps(payload)
+        targets = list(self._connections.get(room_id, set()))
+        logger.debug(
+            "WS broadcast room=%s type=%s clients=%d",
+            room_id, payload.get("type", "?"), len(targets),
+        )
         dead: list[WebSocket] = []
-        for ws in list(self._connections.get(room_id, set())):
+        for ws in targets:
             try:
                 await ws.send_text(message)
             except Exception:

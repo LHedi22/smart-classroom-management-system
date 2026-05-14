@@ -1,0 +1,28 @@
+graph TD
+    root["classroom/{room_id}"]
+
+    root --> S["sensors/"]
+    root --> R["relay/"]
+    root --> ST["status"]
+    root --> AL["alerts"]
+
+    S --> T["sensors/temperature\n{value, unit, ts} — every 5 s"]
+    S --> H["sensors/humidity\n{value, unit, ts} — every 5 s"]
+    S --> AQ["sensors/air_quality\n{value, unit, ts}"]
+    S --> SN["sensors/sound\n{value: 0|1, ts}"]
+
+    R --> AC["relay/ac\n{action: on|off|auto}"]
+    R --> LT["relay/lighting\n{action: on|off|auto}"]
+
+    ST --> STV["{online: true, ts}\n— every 30 s"]
+    AL --> ALV["{type, value}\n→ ESP32 LCD display"]
+
+    classDef pub fill:#dbeafe,stroke:#3b82f6
+    classDef sub fill:#dcfce7,stroke:#16a34a
+    classDef root fill:#f1f5f9,stroke:#475569,font-weight:bold
+
+    class root root
+    class T,H,AQ,SN pub
+    class AC,LT sub
+    class ST,STV pub
+    class AL,ALV sub

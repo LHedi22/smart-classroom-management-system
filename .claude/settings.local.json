@@ -83,7 +83,17 @@
       "Bash(venv\\\\Scripts\\\\pip install *)",
       "Skill(episodic-memory:remembering-conversations)",
       "Skill(superpowers:brainstorming)",
-      "Bash(Find-Item *)"
+      "Bash(Find-Item *)",
+      "Bash(Get-ChildItem -Path \"C:\\\\Hedi\\\\MedTech\\\\Freshman\\\\ISS\\\\smart-classroom-management\\\\frontend\" -Recurse -Directory)",
+      "Bash(Select-Object -First 20)",
+      "Bash(Get-ChildItem -Path \"C:\\\\Hedi\\\\MedTech\\\\Freshman\\\\ISS\\\\smart-classroom-management\" -Recurse -File -Name)",
+      "Bash(Select-Object -First 50)",
+      "Skill(visual-explainer:generate-slides)",
+      "Bash(New-Item -ItemType Directory -Force \"C:\\\\Users\\\\lenovo\\\\.agent\\\\diagrams\")",
+      "Bash(Out-Null)",
+      "Bash(Write-Output \"Directory ready\")",
+      "Skill(claude-mermaid:mermaid-diagrams)",
+      "PowerShell(Get-ChildItem \"C:\\\\Hedi\\\\MedTech\\\\Freshman\\\\ISS\\\\smart-classroom-management\\\\report\" -Recurse | ForEach-Object { $_.FullName })"
     ]
   }
 }

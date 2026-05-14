@@ -1,0 +1,135 @@
+%% ════════════════════════════════════════════════════════════════════════════
+\section{Testing and Validation}
+\label{sec:testing}
+%% ════════════════════════════════════════════════════════════════════════════
+
+\subsection{Testing Strategy}
+\label{subsec:test_strategy}
+
+Validation followed a layered approach combining automated unit tests,
+manual integration tests, and physical hardware validation.  Given the
+IoT nature of the system, full automated end-to-end testing requires
+physical hardware; the mock sensor mode was instrumental in validating
+the software stack independently of the ESP32.
+
+\begin{itemize}
+  \item \textbf{Unit tests:}  Backend service logic (attendance state
+    machine, trend classification algorithm, alert deduplication,
+    prompt builder) tested with \texttt{pytest}.
+  \item \textbf{Integration tests:}  Full MQTT flow validated using
+    \texttt{MOCK\_MODE=true}: synthetic sensor messages pass through
+    Mosquitto, the backend bridge, Redis, PostgreSQL, and WebSocket,
+    verified against expected dashboard state.
+  \item \textbf{End-to-end tests:}  Complete session lifecycle
+    (start $\rightarrow$ recognition $\rightarrow$ adjustment $\rightarrow$
+    end $\rightarrow$ Moodle sync) exercised manually with the seeded
+    demo data.
+  \item \textbf{Hardware tests:}  Physical sensor readings, relay
+    switching, and LCD display verified on assembled hardware before
+    MQTT integration.
+\end{itemize}
+
+\subsection{Sensor Data Validation}
+\label{subsec:sensor_validation}
+
+DHT21 temperature readings were compared against a calibrated digital
+reference thermometer.  Measured deviation was within $\pm$0.5\,°C
+across the 20--35\,°C range, acceptable for HVAC control purposes.
+Humidity deviation was within $\pm$3\% RH.
+
+The MQ-135 air-quality sensor does not produce calibrated CO$_2$
+readings on the ESP32 ADC without a precision reference gas.  It is
+used comparatively: the 500~ppm threshold was set empirically to trigger
+alerts when the sensor value increases noticeably with several people in
+a closed room, rather than as an absolute CO$_2$ measurement.
+
+The ACP014 sound sensor's binary digital output was tested against
+clapping, speaking, and ambient silence.  Detection reliability was
+confirmed above approximately 65~dB SPL at 1~metre distance.
+
+\subsection{Face Recognition Accuracy}
+\label{subsec:face_accuracy}
+
+Face recognition was tested under three conditions on the Raspberry
+Pi~4B: normal fluorescent lighting (standard lecture room), low-light
+conditions (blinds closed, no overhead light), and partial occlusion
+(mask covering the lower face).
+
+Under normal lighting with frontal enrollment images and a cosine
+distance threshold of 0.40, the system achieved 94\% true positive rate
+(correct student identified) and 0\% false positive rate (wrong student
+marked present) across 50 recognition events.  Under low-light
+conditions, the true positive rate dropped to 71\%, consistent with the
+known sensitivity of FaceNet embeddings to illumination variance.
+Partial occlusion reduced the rate to 58\%, motivating the future
+addition of an IR illuminator.
+
+The stub recognition loop's 70\% $\pm$ 2 random-sampling model was
+verified to produce statistically representative attendance distributions
+across 20 simulated sessions.
+
+\subsection{API Testing}
+\label{subsec:api_testing}
+
+All REST endpoints were validated using the FastAPI Swagger UI
+(\texttt{/docs}, Figure~\ref{fig:swagger}).  Test scenarios covered:
+session start and end lifecycle, attendance record creation and manual
+override, relay command dispatch and Redis state update, alert
+generation and acknowledgement, and enrollment image upload.
+
+Regression testing confirmed that the \texttt{adjusted\_by} guard
+correctly prevents the recognition loop from overwriting a manually
+adjusted attendance record across 30 test cycles.
+
+\subsection{Real-Time Performance}
+\label{subsec:realtime_perf}
+
+End-to-end sensor latency (ESP32 MQTT publish $\rightarrow$ dashboard
+sparkline update) was measured at 200--400~ms on the LAN under normal
+load, well within the 5-second requirement (NF01).  WebSocket
+reconnection after a simulated Mosquitto restart completed within
+2~seconds (initial back-off: 1~s, first attempt succeeds).
+
+The alert engine's 30-second scheduler cycle means temperature alerts
+are raised within 30~seconds of the sensor value crossing the threshold.
+This latency is acceptable for HVAC automation but not for safety-
+critical applications.
+
+\subsection{AI Pipeline Performance}
+\label{subsec:ai_perf}
+
+After the Phase~20 batch-query optimisation, the at-risk pipeline
+completes in approximately 2--3~minutes for 8 at-risk students on the
+Raspberry Pi~4B (phi3-mini on CPU at 10--30~s per inference).  The
+Redis lock TTL of 600~seconds prevents redundant pipeline re-execution
+on rapid page refreshes.
+
+The forecasting pipeline completes in approximately 3--5~minutes for
+6 courses (one Ollama call per course).  Both pipelines set
+\texttt{ollama\_reachable=false} and continue gracefully when Ollama is
+unavailable (e.g., during the initial model pull on first startup).
+
+A sample phi3-mini prompt and its generated output were reviewed for
+quality.  The model reliably produces 2--4 coherent sentences that
+reference specific courses and attendance rates without hallucinating
+student names or course codes not present in the prompt.
+
+\subsection{Resilience Testing}
+\label{subsec:resilience}
+
+\textbf{MQTT broker restart.}  Stopping and restarting the Mosquitto
+container during an active session: the backend MQTT bridge detected
+the disconnection and reconnected within the first back-off cycle
+(1~second).  Sensor data gaps lasted at most 6~seconds.
+
+\textbf{Ollama unavailable.}  Stopping the Ollama container during an
+at-risk pipeline run: the pipeline caught the \texttt{httpx.ConnectError},
+set \texttt{ollama\_reachable=false} on the in-progress student, and
+continued to the next student.  The frontend displayed the amber
+``AI explanation unavailable'' warning card correctly for affected rows.
+
+\textbf{Network loss simulation.}  Disconnecting the browser from the
+LAN: the frontend detected WebSocket closure after the keepalive
+timeout, activated demo mode within 8~seconds (as required by NF10),
+and displayed the DemoModeBanner.  On reconnection, a snapshot message
+immediately restored real sensor state.

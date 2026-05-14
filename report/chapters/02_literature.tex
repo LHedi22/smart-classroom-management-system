@@ -1,0 +1,148 @@
+%% ════════════════════════════════════════════════════════════════════════════
+\section{Literature Review and Related Work}
+\label{sec:literature}
+%% ════════════════════════════════════════════════════════════════════════════
+
+\subsection{Smart Classroom Systems: State of the Art}
+\label{subsec:lit_smart}
+
+Smart classroom systems have evolved significantly over the past decade
+from simple RFID card readers to multi-sensor IoT platforms.  Early
+approaches such as~\cite{rfid_attendance_2018} demonstrated that RFID
+tags could replace paper registers, reducing attendance time to under
+two minutes per lecture.  However, RFID systems require students to
+actively tap a reader, introducing a proxy-attendance vulnerability and
+necessitating additional hardware distributed to each student.
+
+Subsequent work explored QR-code-based attendance~\cite{qr_attend_2020},
+which requires only a smartphone but shares the proxy problem and depends
+on stable Internet connectivity for code rotation.  Camera-based
+approaches eliminate student action entirely: the system identifies
+occupants passively, closing the proxy loophole and reducing
+professor workload to zero for the attendance step.
+
+A recurring limitation across these systems is the absence of an
+integrated environmental monitoring layer and of any AI-driven academic
+risk analysis.  They treat attendance as the sole data point, ignoring
+classroom conditions that correlate with student engagement and comfort.
+
+\subsection{Face Recognition in Attendance Systems}
+\label{subsec:lit_face}
+
+Face recognition for attendance has been studied extensively using
+conventional CNN-based pipelines~\cite{facenet_2015, deepface_2021}.
+FaceNet~\cite{facenet_2015} introduced the 128-dimensional embedding
+space with triplet-loss training, enabling sub-centimetre face-to-face
+distance computation via cosine similarity.  DeepFace~\cite{deepface_2021}
+unifies multiple model backends (Facenet, ArcFace, VGG-Face) behind a
+single Python API, significantly reducing integration effort.
+
+Our system uses DeepFace with the Facenet backend.  Enrollment
+generates a 128-dimensional float32 embedding averaged from up to five
+reference images per student; recognition applies cosine-distance
+thresholding ($d < 0.40$) at 2~fps.  This threshold is tighter than
+the DeepFace default ($0.60$) to reduce false-positive attendance
+records on a shared-CPU Raspberry Pi~4B.
+
+Prior work~\cite{rpi_face_2022} showed that Facenet inference on an
+RPi~4B reaches 1--3~fps under normal lighting, consistent with our
+empirical observations.  The primary tradeoff is latency: the 2~fps
+ceiling means a 30-student class requires up to 15~seconds to scan
+all faces in one frame pass, motivating the snapshot-per-cycle
+attendance model described in Section~\ref{subsec:recognition}.
+
+\subsection{IoT Protocols for Educational Environments}
+\label{subsec:lit_mqtt}
+
+Three lightweight messaging protocols are commonly evaluated for IoT
+sensor networks: MQTT~\cite{mqtt_spec_5}, CoAP~\cite{rfc7252_coap},
+and HTTP polling.  MQTT's publish-subscribe architecture decouples
+producers (ESP32 sensor nodes) from consumers (backend services)
+without requiring the sensor to know the consumer's address.  Its
+binary framing and persistent TCP connection produce less per-message
+overhead than HTTP, and its broker-mediated delivery survives transient
+client disconnections through configurable quality-of-service (QoS)
+levels.
+
+QoS~0 (fire-and-forget) is used throughout this system.  For sensor
+readings published every 5~seconds, an occasional dropped message
+causes at most a 10-second gap in the time-series record---acceptable
+for environmental monitoring.  Upgrading to QoS~1 would guarantee
+delivery at the cost of increased broker state and acknowledgement
+round-trips, which is unnecessary on a local network with sub-1~ms
+latency.
+
+\subsection{Local LLM Inference at the Edge}
+\label{subsec:lit_llm}
+
+Recent advances in model quantisation have made it feasible to run
+billion-parameter language models on commodity CPU hardware.  The
+phi3-mini model~\cite{phi3_mini_2024} (3.8~B parameters) from Microsoft
+achieves strong reasoning quality with a 4k-token context window,
+suitable for generating analytical prose from structured attendance data.
+Ollama~\cite{ollama_2024} provides a local model server with a simple
+REST API, eliminating the need for an API key or cloud subscription.
+
+The rationale for a local LLM over a cloud API is threefold: (i)~student
+attendance data should not leave the institution's network boundary;
+(ii)~cloud API costs scale with usage and require internet access during
+every pipeline run; and (iii)~a local model is always available,
+decoupling the AI layer from internet connectivity.
+
+The primary limitation is inference speed: on the RPi~4B CPU,
+phi3-mini requires 10--30~seconds per student explanation.  The
+at-risk pipeline batches all enrolled at-risk students into a single
+pipeline run with one LLM call per student, and a Redis-based cooldown
+(10-minute TTL) prevents redundant re-computation on each page
+refresh~\cite{redis_docs}.
+
+\subsection{LMS Integration}
+\label{subsec:lit_moodle}
+
+Moodle~\cite{moodle_docs} is the dominant open-source Learning Management
+System in higher education.  It exposes a comprehensive REST API
+authenticated via token, enabling programmatic creation and update of
+grade and attendance records.  Automated Moodle sync has been
+demonstrated in related work~\cite{moodle_auto_2021} as an effective way
+to eliminate manual data entry and ensure that the official academic
+record reflects real-time classroom events.
+
+Our implementation calls the Moodle REST API on session end, writing
+presence/absence records for each enrolled student.  A Redis retry
+queue handles transient Moodle unavailability, with retry jobs running
+on a 10-minute scheduler cycle.
+
+\subsection{Summary and Positioning}
+\label{subsec:lit_summary}
+
+Table~\ref{tab:related_work} compares this system with four categories
+of existing approaches across seven distinguishing features.  Our
+system is the only one in this comparison that combines passive face
+recognition with real-time environmental monitoring, local LMS
+synchronisation, and on-premises AI-driven at-risk detection---all
+without cloud dependency.
+
+\begin{table*}[t]
+\centering
+\caption{Comparison of Classroom Management Approaches}
+\label{tab:related_work}
+\begin{tabular}{@{}lccccc@{}}
+\toprule
+\textbf{Feature}
+  & \textbf{RFID~\cite{rfid_attend_2018}}
+  & \textbf{QR-Code~\cite{qr_attend_2020}}
+  & \textbf{CNN Face~\cite{rpi_face_2022}}
+  & \textbf{Cloud IoT~\cite{cloud_iot_class_2023}}
+  & \textbf{This Work} \\
+\midrule
+Attendance method        & RFID card  & QR scan   & Face rec.  & Face rec. & Face rec. \\
+Proxy-attendance proof   & No         & No        & Yes        & Yes       & Yes       \\
+Environment monitoring   & No         & No        & No         & Yes       & Yes       \\
+LMS synchronisation      & No         & No        & No         & Partial   & Yes       \\
+AI risk detection        & No         & No        & No         & No        & Yes       \\
+Cloud-free deployment    & Yes        & No        & Yes        & No        & Yes       \\
+Real-time dashboard      & No         & No        & No         & Yes       & Yes       \\
+Open-source stack        & Partial    & Partial   & Partial    & No        & Yes       \\
+\bottomrule
+\end{tabular}
+\end{table*}

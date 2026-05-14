@@ -1,0 +1,116 @@
+%% ════════════════════════════════════════════════════════════════════════════
+\section{Security and Privacy}
+\label{sec:security}
+%% ════════════════════════════════════════════════════════════════════════════
+
+\subsection{Security Architecture Overview}
+\label{subsec:sec_overview}
+
+The threat model assumes deployment on a university intranet accessible
+only to faculty and staff on the campus LAN.  The primary assets are
+student biometric encodings and attendance records.  Defence is
+structured across four layers: network (LAN-only exposure), application
+(JWT role-based access), data (bcrypt, BYTEA embeddings, no raw images),
+and transport (nginx as the single ingress point).
+
+\subsection{Authentication and Authorisation}
+\label{subsec:auth}
+
+Professor accounts are authenticated via JSON Web Tokens (HS256
+algorithm) with a configurable expiry (default: 480~minutes).  Passwords
+are stored as bcrypt hashes; no plaintext credential ever reaches the
+database.  Two roles are supported: \texttt{professor} and
+\texttt{admin}.  Role-based access control is enforced at the FastAPI
+dependency level (\texttt{get\_current\_professor},
+\texttt{require\_admin}):
+
+\begin{itemize}
+  \item Professors see only their own courses, sessions, and
+    students in all list endpoints.
+  \item Admin-only endpoints (\texttt{POST /api/at-risk/recompute},
+    \texttt{POST /api/forecasting/recompute}) return HTTP~403 for
+    professor-role tokens.
+\end{itemize}
+
+The \texttt{REQUIRE\_AUTH} environment variable is set to \texttt{false}
+in development, allowing unauthenticated requests to simplify local
+testing.  This flag must be set to \texttt{true} in any deployment
+accessible beyond the immediate developer machine.
+
+\subsection{Biometric Data Handling}
+\label{subsec:biometrics}
+
+Face encodings are stored exclusively as 128-dimensional float32 numpy
+arrays serialised to PostgreSQL BYTEA.  The enrollment workflow
+explicitly discards the source image after computing the embedding: only
+the averaged embedding vector is persisted.  No identifiable facial
+image is ever written to disk or transmitted over the network.
+
+In stub mode (\texttt{FACE\_RECOGNITION\_ENABLED=false}), a
+zeroed 128-d placeholder is stored instead; the DeepFace library is not
+loaded and no camera frames are processed.  This mode is used in all
+Docker-based deployments, ensuring that the development environment
+handles no real biometric data.
+
+\subsection{Data Privacy Considerations}
+\label{subsec:privacy}
+
+All system components run on-premises (Raspberry Pi or Docker host).
+No student data---attendance records, sensor readings, or face
+encodings---is transmitted to any external service.  Ollama processes
+LLM prompts locally; no student information leaves the network boundary.
+
+The at-risk prompt engine enforces content constraints that prevent the
+LLM from generating statements about a student's health, personal life,
+family situation, or psychological state.  Output is limited to
+attendance statistics and academic context.  The generated text is
+stored in \texttt{at\_risk\_explanations.summary\_explanation} and is
+visible only to professors of the student's enrolled courses and to
+administrators.
+
+Moodle synchronisation occurs over the campus LAN only.  The Moodle
+token is stored as an environment variable and is never logged or
+exposed through any API endpoint.
+
+\subsection{Transport and Network Security}
+\label{subsec:transport}
+
+The current deployment uses HTTP and unencrypted WebSocket (WS) on the
+university LAN.  This is acceptable for an intranet system where network
+traffic is not exposed to the public internet.  The nginx reverse proxy
+acts as the sole ingress point; the FastAPI backend port~8000 is not
+published to the host network.
+
+A clear path to HTTPS/WSS exists: replacing the nginx configuration
+with an SSL-terminating virtual host (using a LAN certificate from a
+university CA) requires no backend changes, as FastAPI operates
+identically behind SSL termination.  This is documented as a
+production-hardening requirement.
+
+MQTT communication between the ESP32 and Mosquitto operates at QoS~0
+over the local WiFi network.  No MQTT authentication is configured
+(\texttt{allow\_anonymous true} in \texttt{mosquitto.conf}); adding
+username/password or TLS client certificates is identified as future
+work.
+
+\subsection{Session and Token Security}
+\label{subsec:token_security}
+
+JWT tokens are stored in browser \texttt{localStorage}.  The security
+tradeoff is acknowledged: \texttt{localStorage} is accessible to
+JavaScript and is not protected by the \texttt{HttpOnly} cookie flag,
+making it theoretically vulnerable to XSS attacks.  On a closed
+university intranet with a controlled codebase, this risk is accepted
+in exchange for simpler client-side implementation.  Token expiry
+(480~minutes) is enforced server-side.  No refresh token mechanism is
+implemented; after expiry the professor must re-authenticate.
+
+\subsection{Operational Security}
+\label{subsec:ops_security}
+
+The \texttt{SECRET\_KEY} environment variable ships with a placeholder
+value (\texttt{changeme-use-a-long-random-string-in-production}) that
+must be replaced before any deployment.  The seed script creates
+professor accounts with non-trivial passwords that are hashed with
+bcrypt before insertion.  Docker named volumes isolate persistent data;
+volume backup is recommended as part of a production runbook.

@@ -1,0 +1,103 @@
+% Smart Campus Classroom Management System — IEEE Technical Report
+% SMU Mediterranean Institute of Technology | ISS Project 2025–2026
+% Team: Ben Jemaa · Jallouli · Saadaoui · Ouertani · Day
+%
+% Compile sequence (Overleaf / local MiKTeX / TeX Live):
+%   pdflatex main && bibtex main && pdflatex main && pdflatex main
+
+\documentclass[journal]{IEEEtran}
+
+%% ── Packages ──────────────────────────────────────────────────────────────
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{graphicx}
+\usepackage{hyperref}
+\usepackage{booktabs}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{amsmath}
+\usepackage{float}
+\usepackage{array}
+\usepackage{tabularx}
+\usepackage{multirow}
+\usepackage{url}
+\usepackage{cite}
+\usepackage{microtype}
+
+%% ── Graphics path ─────────────────────────────────────────────────────────
+\graphicspath{{figures/}}
+
+%% ── Hyperref setup ────────────────────────────────────────────────────────
+\hypersetup{
+  colorlinks = true,
+  linkcolor  = blue!60!black,
+  citecolor  = green!50!black,
+  urlcolor   = blue!60!black,
+  pdftitle   = {Smart Campus Classroom Management System},
+  pdfauthor  = {SMU ISS Team 2025-2026},
+}
+
+%% ── Code listing style ────────────────────────────────────────────────────
+\lstdefinestyle{pycode}{
+  language     = Python,
+  basicstyle   = \ttfamily\footnotesize,
+  keywordstyle = \color{blue!70!black}\bfseries,
+  commentstyle = \color{green!50!black}\itshape,
+  stringstyle  = \color{red!60!black},
+  breaklines   = true,
+  frame        = single,
+  numbers      = left,
+  numberstyle  = \tiny\color{gray},
+  xleftmargin  = 1.5em,
+}
+
+\lstdefinestyle{jsoncode}{
+  basicstyle   = \ttfamily\footnotesize,
+  breaklines   = true,
+  frame        = single,
+  numbers      = left,
+  numberstyle  = \tiny\color{gray},
+  xleftmargin  = 1.5em,
+}
+
+%% ── Title block ───────────────────────────────────────────────────────────
+\title{Smart Campus Classroom Management System:\\
+       An IoT and Edge-AI Approach to Automated Attendance,\\
+       Environmental Monitoring, and At-Risk Detection}
+
+\author{Mohamed~Hedi~Ben~Jemaa,~Ahmed~Amine~Jallouli,~Ali~Saadaoui,\\
+        Abdelhamid~Ouertani,~and~Iyed~Day%
+  \thanks{All authors are students at SMU\,--\,Mediterranean Institute of
+    Technology, Tunis, Tunisia (ISS Project, Academic Year 2025\,--\,2026).
+    Supervisor: SMU ISS Faculty.
+    Manuscript submitted: May 2026.}}
+
+%% ═══════════════════════════════════════════════════════════════════════════
+\begin{document}
+
+\maketitle
+
+%% ── Abstract + Keywords ───────────────────────────────────────────────────
+\input{chapters/00_front_matter}
+
+%% ── Chapters ──────────────────────────────────────────────────────────────
+\input{chapters/01_introduction}
+\input{chapters/02_literature}
+\input{chapters/03_requirements}
+\input{chapters/04_architecture}
+\input{chapters/05_implementation}
+\input{chapters/06_ai_analytics}
+\input{chapters/07_security}
+\input{chapters/08_testing}
+\input{chapters/09_results}
+\input{chapters/10_conclusion}
+
+%% ── References ────────────────────────────────────────────────────────────
+\bibliographystyle{IEEEtran}
+\bibliography{chapters/references}
+
+%% ── Appendices ────────────────────────────────────────────────────────────
+\appendix
+\input{chapters/appendices}
+
+\end{document}

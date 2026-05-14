@@ -1,0 +1,37 @@
+graph TB
+    subgraph RPi["Raspberry Pi 4B — Edge Runtime"]
+        direction TB
+        PG[(PostgreSQL 15\n:5432)]
+        RD[(Redis 7\n:6379)]
+        MQ[Mosquitto Broker\n:1883]
+        BE[FastAPI Backend\n:8000]
+        OL[Ollama phi3-mini\n:11434]
+        NG[nginx + React\n:3000]
+        CAM[RPi Camera\nModule v2]
+    end
+
+    ESP["ESP32 Node\nDHT21 · MQ-135 · ACP014\n4-ch Relay · LCD 16×2"]
+    BR["Professor Browser\n(LAN laptop/tablet)"]
+
+    ESP -- "MQTT QoS 0\nWiFi :1883" --> MQ
+    MQ -- subscribe --> BE
+    BE -- relay commands --> MQ
+    MQ -- subscribe --> ESP
+
+    BE --> PG
+    BE --> RD
+    BE --> OL
+    CAM -- "2 fps frame" --> BE
+
+    BE --> NG
+    BR -- "HTTP :3000" --> NG
+    BR -- "WS :3000/ws/..." --> NG
+    NG -- "proxy /api/* /ws/*" --> BE
+
+    classDef ext fill:#fef9c3,stroke:#ca8a04
+    classDef svc fill:#eff6ff,stroke:#3b82f6
+    classDef data fill:#f0fdf4,stroke:#16a34a
+
+    class ESP,BR ext
+    class MQ,BE,OL,NG svc
+    class PG,RD data

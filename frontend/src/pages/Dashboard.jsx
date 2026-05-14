@@ -498,7 +498,7 @@ function DoneSensorCard({ type, stats }) {
 // ── Sensors tab ───────────────────────────────────────────────────────────
 
 function SensorsTab({ sessionId, displayStatus, sparkData }) {
-  const { sensors: wsSensors, isDemoMode } = useSensor()
+  const { sensors: wsSensors, isDemoMode, deviceOnline } = useSensor()
   const [summary,    setSummary]    = useState(null)
   const [pollLatest, setPollLatest] = useState(null)
   const [loading,    setLoading]    = useState(false)
@@ -558,20 +558,68 @@ function SensorsTab({ sessionId, displayStatus, sparkData }) {
   }
 
   const src = isDemoMode ? pollLatest : wsSensors
+  const hasSensors = Object.keys(wsSensors).length > 0
+
+  let hwBadge = null
+  if (!isDemoMode) {
+    if (deviceOnline) {
+      hwBadge = (
+        <span style={{
+          display: 'inline-flex', alignItems: 'center', gap: 5,
+          fontSize: 11, fontWeight: 700, color: '#007A77',
+          background: 'rgba(0,122,119,0.08)', border: '1px solid rgba(0,122,119,0.25)',
+          borderRadius: 20, padding: '3px 10px',
+        }}>
+          <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#007A77', display: 'inline-block', animation: 'pulse-dot 2.2s ease-in-out infinite' }} />
+          ESP32 Online
+        </span>
+      )
+    } else if (hasSensors) {
+      hwBadge = (
+        <span style={{
+          display: 'inline-flex', alignItems: 'center', gap: 5,
+          fontSize: 11, fontWeight: 700, color: '#7A5B00',
+          background: 'rgba(255,183,0,0.08)', border: '1px solid rgba(255,183,0,0.30)',
+          borderRadius: 20, padding: '3px 10px',
+        }}>
+          <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#FFB700', display: 'inline-block' }} />
+          Cached Data
+        </span>
+      )
+    } else {
+      hwBadge = (
+        <span style={{
+          display: 'inline-flex', alignItems: 'center', gap: 5,
+          fontSize: 11, fontWeight: 700, color: 'var(--color-red)',
+          background: 'rgba(236,0,68,0.06)', border: '1px solid rgba(236,0,68,0.20)',
+          borderRadius: 20, padding: '3px 10px',
+        }}>
+          <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--color-red)', display: 'inline-block' }} />
+          No Hardware
+        </span>
+      )
+    }
+  }
+
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-      {Object.keys(SENSOR_META).map(type => {
-        const val = src?.[type]?.value ?? pollLatest?.[type]?.value ?? null
-        return (
-          <LiveSensorCard
-            key={type}
-            type={type}
-            value={val}
-            sparkData={sparkData[type] ?? []}
-          />
-        )
-      })}
-    </div>
+    <>
+      {hwBadge && (
+        <div style={{ marginBottom: 12 }}>{hwBadge}</div>
+      )}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+        {Object.keys(SENSOR_META).map(type => {
+          const val = src?.[type]?.value ?? pollLatest?.[type]?.value ?? null
+          return (
+            <LiveSensorCard
+              key={type}
+              type={type}
+              value={val}
+              sparkData={sparkData[type] ?? []}
+            />
+          )
+        })}
+      </div>
+    </>
   )
 }
 

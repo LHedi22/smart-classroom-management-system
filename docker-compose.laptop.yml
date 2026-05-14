@@ -1,0 +1,26 @@
+# Laptop-mode Docker Compose override.
+#
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.laptop.yml up -d
+#
+# What this does vs the base compose file:
+#   • MOCK_MODE=false   — backend ingests real MQTT data from the ESP32, no synthetic data
+#   • LAPTOP_MODE=true  — signals that webcam recognition runs as a host-side script
+#   • FACE_RECOGNITION_ENABLED=false — DeepFace/TF not loaded inside the container
+#
+# Pre-requisites:
+#   1. Find your laptop LAN IP:  ipconfig (Windows) | ifconfig (macOS/Linux)
+#   2. In firmware/classroom_node/config.h set MQTT_HOST to that IP and reflash the ESP32.
+#   3. Ensure Windows Firewall / macOS pf allows inbound TCP on port 1883.
+#   4. The ESP32 and laptop must be on the SAME WiFi network.
+#
+# To run the smoke test after starting the stack:
+#   pip install paho-mqtt websocket-client
+#   python test_laptop_mode.py
+
+services:
+  backend:
+    environment:
+      MOCK_MODE: "false"
+      LAPTOP_MODE: "true"
+      FACE_RECOGNITION_ENABLED: "false"

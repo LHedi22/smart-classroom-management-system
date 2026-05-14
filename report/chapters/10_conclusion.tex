@@ -1,0 +1,88 @@
+%% ════════════════════════════════════════════════════════════════════════════
+\section{Conclusion}
+\label{sec:conclusion}
+%% ════════════════════════════════════════════════════════════════════════════
+
+\subsection{Summary of Contributions}
+\label{subsec:contributions}
+
+This paper presented the design, implementation, and evaluation of the
+Smart Campus Classroom Management System---an end-to-end IoT and edge-AI
+platform that addresses three concrete problems in university classroom
+management: manual attendance, unmonitored environment, and the absence
+of early warning for at-risk students.
+
+The principal contributions are as follows:
+
+\begin{enumerate}
+  \item \textbf{A fully self-contained edge stack.}  All services
+    (MQTT broker, backend, database, AI inference, frontend) run on a
+    single Raspberry Pi~4B without cloud dependency, making the system
+    deployable in institutions with restricted internet access or strong
+    data-residency requirements.
+
+  \item \textbf{Snapshot-per-cycle attendance model.}  A bidirectional
+    present$\leftrightarrow$absent evaluation loop that captures students
+    who arrive late or leave early, replacing the single-shot model that
+    previous edge-based systems typically use.
+
+  \item \textbf{A two-tier AI analytics layer.}  Deterministic trend
+    classification for robustness combined with LLM-generated prose for
+    interpretability---a pattern that prevents hallucinated structured
+    values while preserving the human-readable output that academic
+    advisers require.
+
+  \item \textbf{A 5$\times$ pipeline runtime reduction.}  Batch-query
+    optimisation reduced the at-risk explanation pipeline from 14--16
+    minutes to approximately 2--3 minutes for 8 students, making the
+    feature practical for page-triggered on-demand use.
+
+  \item \textbf{A 22-phase iterative delivery within one semester.}
+    The phased development model allowed early end-to-end integration
+    (hardware $\rightarrow$ firmware $\rightarrow$ backend $\rightarrow$
+    frontend) and frequent risk mitigation, with stub and mock modes
+    enabling software progress independent of hardware availability.
+\end{enumerate}
+
+\subsection{Future Work}
+\label{subsec:future}
+
+Several extensions are identified for future development:
+
+\begin{itemize}
+  \item \textbf{Multi-room support.}  A shared backend with
+    per-room MQTT namespacing, database partitioning by
+    \texttt{room\_id}, and a room-selection UI for professors.
+
+  \item \textbf{React Native mobile app.}  A companion app for
+    professors to view live sensor data, acknowledge alerts, and start
+    sessions from a smartphone.
+
+  \item \textbf{IR illuminator.}  Adding an IR LED ring to the camera
+    module to improve low-light face recognition accuracy from 71\% to
+    near-normal-light levels.
+
+  \item \textbf{HTTPS/WSS deployment.}  SSL termination in nginx using
+    a university-issued LAN certificate, with no backend changes
+    required.
+
+  \item \textbf{Quantised GGUF model via llama.cpp.}  Replacing Ollama
+    with a 4-bit quantised phi3-mini GGUF model to reduce inference time
+    from 10--30~s to an estimated 3--8~s per student on the RPi~4B CPU.
+
+  \item \textbf{Calibrated CO$_2$ sensor.}  Replacing the MQ-135 with
+    an SCD30 or MH-Z19B NDIR sensor for accurate CO$_2$ monitoring and
+    tighter air-quality thresholding.
+
+  \item \textbf{Daily at-risk email digest.}  Scheduled morning emails
+    to academic advisers summarising students whose attendance fell below
+    threshold since the previous digest.
+
+  \item \textbf{QR-code self-enrollment.}  Allowing students to
+    upload their own enrollment photos via a QR-linked web page,
+    reducing the manual enrollment burden on professors.
+
+  \item \textbf{Offline SQLite fallback.}  A lightweight persistence
+    layer that continues recording attendance when the PostgreSQL
+    container is unreachable, with automatic sync on recovery.
+\end{itemize}

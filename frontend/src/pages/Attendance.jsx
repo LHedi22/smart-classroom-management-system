@@ -94,6 +94,7 @@ export default function Attendance() {
   }, [sessionId])
 
   async function updateStatus(recordId, status) {
+    if (!recordId) return  // virtual record — no DB row yet
     setEditingId(null)
     setRecords(prev => prev.map(r => r.id === recordId ? { ...r, status, adjusted_by: 'professor' } : r))
     await client.patch(`/attendance/${recordId}`, { status })
@@ -110,6 +111,7 @@ export default function Attendance() {
   const present = records.filter(r => r.status === 'present').length
   const absent  = records.filter(r => r.status === 'absent').length
   const late    = records.filter(r => r.status === 'late').length
+  const total   = records.length
 
   return (
     <div className="page-shell">
@@ -145,7 +147,7 @@ export default function Attendance() {
             <StatPill label="Present" value={present} valueColor="var(--color-forest)" />
             <StatPill label="Absent"  value={absent}  valueColor="var(--color-red)" />
             <StatPill label="Late"    value={late}     valueColor="#7A5B00" />
-            <StatPill label="Total"   value={session.total_students ?? records.length} />
+            <StatPill label="Total"   value={total} />
           </div>
         )}
       </section>
@@ -159,9 +161,9 @@ export default function Attendance() {
         ) : records.length === 0 ? (
           <div className="empty-state">
             <EmptyChairSVG />
-            <p className="empty-state-title">No attendance records</p>
+            <p className="empty-state-title">No students enrolled</p>
             <p className="empty-state-desc">
-              Records appear as students are recognized, or click "Mark absent" to fill in missing students.
+              Enroll students in this course to see their attendance here.
             </p>
           </div>
         ) : (
@@ -179,16 +181,14 @@ export default function Attendance() {
               {records.map(rec => {
                 const riskInfo = atRiskMap[rec.student_id]
                 const isAtRisk = !!riskInfo
+                const isVirtual = !rec.id
                 return (
-                <tr key={rec.id} className="table-row">
+                <tr key={rec.id ?? `virtual-${rec.student_id}`} className="table-row" style={{ opacity: isVirtual ? 0.72 : 1 }}>
                   <td style={{ padding: '12px 16px', fontWeight: 600, color: 'var(--color-text-primary)' }}>
                     <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}>
                       {rec.student_name}
                       {isAtRisk && (
                         <span className="status-chip-danger" style={{ fontSize: 10, padding: '2px 7px' }}>At Risk</span>
-                      )}
-                      {!isAtRisk && riskInfo === undefined && (riskInfo?.consecutive_absences ?? 0) >= 2 && (
-                        <span className="status-chip-warning" style={{ fontSize: 10, padding: '2px 7px' }}>Watch</span>
                       )}
                     </span>
                     {isAtRisk && (riskInfo.consecutive_absences ?? 0) >= 2 && (
@@ -199,7 +199,7 @@ export default function Attendance() {
                   </td>
                   <td style={{ padding: '12px 16px', color: 'var(--color-text-muted)', fontFamily: 'monospace', fontSize: 12 }}>{rec.student_number}</td>
                   <td style={{ padding: '12px 16px' }}>
-                    {editingId === rec.id ? (
+                    {!isVirtual && editingId === rec.id ? (
                       <select
                         autoFocus
                         defaultValue={rec.status}
@@ -213,16 +213,29 @@ export default function Attendance() {
                       </select>
                     ) : (
                       <button
-                        title="Click to edit"
-                        onClick={() => setEditingId(rec.id)}
+                        title={isVirtual ? 'Not yet detected — click "Mark absent" to record' : 'Click to edit'}
+                        onClick={() => !isVirtual && setEditingId(rec.id)}
                         className={STATUS_CLASSES[rec.status]}
-                        style={{ cursor: 'pointer', border: 'none', background: 'inherit', font: 'inherit', padding: 'inherit', borderRadius: 'inherit', transition: 'opacity 0.15s' }}
+                        style={{
+                          cursor: isVirtual ? 'default' : 'pointer',
+                          border: 'none',
+                          background: 'inherit',
+                          font: 'inherit',
+                          padding: 'inherit',
+                          borderRadius: 'inherit',
+                          transition: 'opacity 0.15s',
+                        }}
                       >
                         {rec.status}
                       </button>
                     )}
                   </td>
-                  <td style={{ padding: '12px 16px', color: 'var(--color-text-muted)', fontSize: 12 }}>{fmt(rec.detected_at)}</td>
+                  <td style={{ padding: '12px 16px', color: 'var(--color-text-muted)', fontSize: 12 }}>
+                    {isVirtual
+                      ? <span style={{ fontStyle: 'italic', fontSize: 11 }}>not detected</span>
+                      : fmt(rec.detected_at)
+                    }
+                  </td>
                   <td style={{ padding: '12px 16px', fontSize: 12 }}>
                     {rec.adjusted_by && (
                       <span style={{ color: '#7A5B00', fontWeight: 600, fontSize: 11 }}>Adjusted by professor</span>

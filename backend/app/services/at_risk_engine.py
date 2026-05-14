@@ -33,6 +33,13 @@ logger = logging.getLogger(__name__)
 _FRESH_SKIP_SECONDS = 600  # skip students explained within the last 10 minutes
 
 
+def _age_seconds(dt: datetime) -> float:
+    """Return seconds elapsed since `dt`, normalising naive datetimes to UTC."""
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return (datetime.now(timezone.utc) - dt).total_seconds()
+
+
 # ── Batch sensor + peer queries ───────────────────────────────────────────
 
 async def _batch_sensor_avgs(db: AsyncSession, student_id: str) -> dict[str, dict]:
@@ -379,8 +386,7 @@ async def run_at_risk_pipeline() -> dict:
 
                 # 4a. Skip if explanation was generated recently and Ollama was reachable
                 if expl and expl.ollama_reachable and expl.generated_at:
-                    age = (datetime.now(timezone.utc) - expl.generated_at).total_seconds()
-                    if age < _FRESH_SKIP_SECONDS:
+                    if _age_seconds(expl.generated_at) < _FRESH_SKIP_SECONDS:
                         skipped_fresh += 1
                         continue
 

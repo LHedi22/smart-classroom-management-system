@@ -7,7 +7,7 @@ from fastapi import FastAPI
 from app.config import settings
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import alerts, at_risk, attendance, auth, control, courses, enrollment, insights, sensors, sessions, websocket
+from app.api import alerts, at_risk, attendance, auth, control, courses, enrollment, forecast, insights, sensors, sessions, webcam, websocket
 from app.models.schemas import HealthResponse, MoodleConnectionStatus
 from app.redis_client import close_redis, get_redis_pool
 from app.services.alert_engine import alert_engine
@@ -123,6 +123,8 @@ app.include_router(enrollment.router, prefix="/api",            tags=["enrollmen
 app.include_router(alerts.router,     prefix="/api/alerts",     tags=["alerts"])
 app.include_router(insights.router,   prefix="/api/insights",   tags=["insights"])
 app.include_router(at_risk.router,    prefix="/api",            tags=["at-risk"])
+app.include_router(forecast.router,   prefix="/api",            tags=["forecasting"])
+app.include_router(webcam.router,     prefix="/api/webcam",     tags=["webcam"])
 app.include_router(websocket.router,  prefix="/ws",             tags=["websocket"])
 
 

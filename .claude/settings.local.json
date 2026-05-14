@@ -71,7 +71,19 @@
       "Bash(curl -s \"http://localhost:8000/api/insights/ai-summary?scope=global&id=all\")",
       "Bash(curl -s \"http://localhost:8000/api/insights/ai-summary?scope=course&id=badid\")",
       "Bash(curl -s \"http://localhost:8000/api/insights/ai-summary?scope=unknown&id=x\")",
-      "Bash(node -e ' *)"
+      "Bash(node -e ' *)",
+      "Bash(chmod +x ~/.claude/hooks/pre-tool-memory.sh ~/.claude/hooks/pre-tool-memory.py)",
+      "Bash(gh pr *)",
+      "Bash(curl -s http://localhost:8000/api/webcam/encodings)",
+      "Bash(curl -s -X POST http://localhost:8000/api/webcam/attendance -H \"Content-Type: application/json\" -d \"{\\\\\"student_id\\\\\":\\\\\"00000000-0000-0000-0000-000000000000\\\\\",\\\\\"status\\\\\":\\\\\"present\\\\\",\\\\\"confidence\\\\\":0.9}\")",
+      "Bash(Copy-Item *)",
+      "Bash(node \"C:\\\\Users\\\\lenovo\\\\.claude\\\\plugins\\\\cache\\\\claude-plugins-official\\\\session-report\\\\unknown\\\\skills\\\\session-report\\\\analyze-sessions.mjs\" --json --since 7d)",
+      "Bash(echo \"exit: $?\")",
+      "Bash(pip --version)",
+      "Bash(venv\\\\Scripts\\\\pip install *)",
+      "Skill(episodic-memory:remembering-conversations)",
+      "Skill(superpowers:brainstorming)",
+      "Bash(Find-Item *)"
     ]
   }
 }

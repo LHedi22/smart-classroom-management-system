@@ -2,6 +2,7 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -18,6 +19,7 @@ from app.models.db_models import (
 from app.models.schemas import (
     AttendanceAdjust,
     AttendanceRecordResponse,
+    AttendanceRosterEntry,
     AttendanceWithStudent,
     StudentHistoryEntry,
 )
@@ -29,38 +31,67 @@ router = APIRouter()
 # GET /api/sessions/{session_id}/attendance
 # ─────────────────────────────────────────────────────────────────────────
 
-@router.get("/sessions/{session_id}/attendance", response_model=list[AttendanceWithStudent])
+@router.get("/sessions/{session_id}/attendance", response_model=list[AttendanceRosterEntry])
 async def get_session_attendance(
     session_id: str,
     db: AsyncSession = Depends(get_db),
-) -> list[AttendanceWithStudent]:
+) -> list[AttendanceRosterEntry]:
     session = await db.get(Session, session_id)
     if session is None:
         raise HTTPException(status_code=404, detail="Session not found")
 
-    result = await db.execute(
+    # All students enrolled in this course, alphabetically
+    enrolled_q = await db.execute(
+        select(Student)
+        .join(course_students, Student.id == course_students.c.student_id)
+        .where(course_students.c.course_id == session.course_id)
+        .order_by(Student.name)
+    )
+    enrolled = enrolled_q.scalars().all()
+
+    # Existing attendance records keyed by student_id
+    records_q = await db.execute(
         select(AttendanceRecord)
         .where(AttendanceRecord.session_id == session_id)
         .options(selectinload(AttendanceRecord.student))
-        .order_by(AttendanceRecord.detected_at)
     )
-    records = result.scalars().all()
+    record_by_student = {r.student_id: r for r in records_q.scalars().all()}
 
-    return [
-        AttendanceWithStudent(
-            id=r.id,
-            session_id=r.session_id,
-            student_id=r.student_id,
-            status=r.status,
-            detected_at=r.detected_at,
-            adjusted_by=r.adjusted_by,
-            adjusted_at=r.adjusted_at,
-            moodle_synced=r.moodle_synced,
-            student_name=r.student.name,
-            student_number=r.student.student_id,
-        )
-        for r in records
-    ]
+    roster: list[AttendanceRosterEntry] = []
+    for student in enrolled:
+        r = record_by_student.get(student.id)
+        if r:
+            roster.append(AttendanceRosterEntry(
+                id=r.id,
+                session_id=r.session_id,
+                student_id=r.student_id,
+                status=r.status,
+                detected_at=r.detected_at,
+                adjusted_by=r.adjusted_by,
+                adjusted_at=r.adjusted_at,
+                moodle_synced=r.moodle_synced,
+                student_name=student.name,
+                student_number=student.student_id,
+            ))
+        else:
+            # Virtual absent entry — student enrolled but not yet detected
+            roster.append(AttendanceRosterEntry(
+                session_id=session_id,
+                student_id=student.id,
+                status=AttendanceStatus.absent,
+                student_name=student.name,
+                student_number=student.student_id,
+            ))
+
+    # Sort: present/late first, then absent with real records, then virtual absent (id=None)
+    status_order = {AttendanceStatus.present: 0, AttendanceStatus.late: 1,
+                    AttendanceStatus.excused: 2, AttendanceStatus.absent: 3}
+    roster.sort(key=lambda e: (
+        status_order.get(e.status, 9),
+        e.id is None,
+        e.student_name,
+    ))
+    return roster
 
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -99,36 +130,39 @@ async def mark_absent(
     if session is None:
         raise HTTPException(status_code=404, detail="Session not found")
 
-    # Students enrolled in this course
     enrolled_q = await db.execute(
         select(Student.id).join(
             course_students, Student.id == course_students.c.student_id
         ).where(course_students.c.course_id == session.course_id)
     )
-    enrolled_ids = {row[0] for row in enrolled_q.all()}
+    enrolled_ids = [row[0] for row in enrolled_q.all()]
 
-    # Students who already have a record for this session
-    recorded_q = await db.execute(
-        select(AttendanceRecord.student_id).where(AttendanceRecord.session_id == session_id)
+    if not enrolled_ids:
+        return []
+
+    # Single atomic statement — no race window between two queries.
+    # ON CONFLICT DO NOTHING skips students already recorded (present/late/etc).
+    # RETURNING gives us only the rows that were actually inserted.
+    stmt = (
+        pg_insert(AttendanceRecord)
+        .values([
+            {"session_id": session_id, "student_id": sid, "status": AttendanceStatus.absent}
+            for sid in enrolled_ids
+        ])
+        .on_conflict_do_nothing(index_elements=["session_id", "student_id"])
+        .returning(AttendanceRecord.id)
     )
-    recorded_ids = {row[0] for row in recorded_q.all()}
-
-    missing_ids = enrolled_ids - recorded_ids
-    new_records: list[AttendanceRecord] = []
-
-    for sid in missing_ids:
-        record = AttendanceRecord(
-            session_id=session_id,
-            student_id=sid,
-            status=AttendanceStatus.absent,
-        )
-        db.add(record)
-        new_records.append(record)
-
+    result = await db.execute(stmt)
+    new_ids = [row[0] for row in result.all()]
     await db.commit()
-    for r in new_records:
-        await db.refresh(r)
-    return new_records
+
+    if not new_ids:
+        return []
+
+    new_records_q = await db.execute(
+        select(AttendanceRecord).where(AttendanceRecord.id.in_(new_ids))
+    )
+    return list(new_records_q.scalars().all())
 
 
 # ─────────────────────────────────────────────────────────────────────────

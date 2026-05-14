@@ -53,6 +53,12 @@ const AlertTriangleIcon = () => (
     <line x1="12" y1="17" x2="12.01" y2="17"/>
   </svg>
 )
+const TrendIcon = () => (
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <polyline points="22 7 13.5 15.5 8.5 10.5 2 17"/>
+    <polyline points="16 7 22 7 22 13"/>
+  </svg>
+)
 
 const NAV = [
   { to: '/dashboard',  label: 'Dashboard',  Icon: GridIcon },
@@ -61,7 +67,8 @@ const NAV = [
   { to: '/enrollment', label: 'Enrollment',  Icon: UserPlusIcon },
   { to: '/history',    label: 'History',     Icon: ClockIcon },
   { to: '/insights',   label: 'Insights',    Icon: BarChartIcon },
-  { to: '/at-risk',    label: 'At-Risk',     Icon: AlertTriangleIcon },
+  { to: '/at-risk',      label: 'At-Risk',      Icon: AlertTriangleIcon },
+  { to: '/forecasting',  label: 'Forecasting',  Icon: TrendIcon },
 ]
 
 function Sidebar() {

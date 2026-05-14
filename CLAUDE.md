@@ -9,14 +9,14 @@ smart-classroom/
 ├── firmware/classroom_node/   # ESP32 Arduino sketch (classroom_node.ino + config.h)
 ├── backend/app/
 │   ├── main.py, config.py, database.py, redis_client.py
-│   ├── api/        → sensors, attendance, control, sessions, alerts, enrollment, at_risk, websocket
+│   ├── api/        → sensors, attendance, control, sessions, alerts, enrollment, at_risk, forecast, websocket
 │   ├── services/   → mqtt_bridge, face_recognition_service, recognition_loop, alert_engine,
-│   │                  mock_sensor, moodle_client, at_risk_engine
+│   │                  mock_sensor, moodle_client, at_risk_engine, forecast_engine
 │   └── models/     → db_models.py (SQLAlchemy ORM), schemas.py (Pydantic)
 ├── frontend/src/
 │   ├── tokens.css             # CSS design token source of truth
 │   ├── index.css              # all component classes; references token vars only
-│   ├── pages/  → Dashboard, Attendance, Control, Enrollment, History, AtRisk, Login
+│   ├── pages/  → Dashboard, Attendance, Control, Enrollment, History, AtRisk, Forecasting, Login
 │   ├── components/ → Layout (240px blue sidebar), DemoModeBanner
 │   ├── hooks/useLiveSensors.js
 │   └── api/client.js
@@ -87,6 +87,9 @@ id (UUID PK), room_id, type (ENUM: temp_high|temp_low|air_quality_high|attendanc
 at_risk_explanations (Phase 19)
 id (UUID PK), student_id (FK → students ON DELETE CASCADE), overall_attendance_rate (FLOAT), summary_explanation (TEXT — LLM narrative), per_course_data (JSONB — array of per-course stats + explanation), generated_at (TIMESTAMP), ollama_reachable (BOOL)
 Index: UNIQUE on student_id; upserted on every pipeline run.
+attendance_forecasts (Phase 21)
+id (UUID PK), course_id (FK → courses ON DELETE CASCADE, UNIQUE), trend_data (JSONB — array of {session_date, rate} points), expected_next_rate (FLOAT nullable), trend_classification (VARCHAR(30) nullable — steady_decline|accelerating_decline|stable|recovering), confidence_level (VARCHAR(10) nullable — low|medium|high), interpretation (TEXT nullable — LLM prose), suggested_action (VARCHAR(30) nullable — monitor_closely|consider_intervention|on_track), ollama_reachable (BOOL), generated_at (TIMESTAMP)
+Index: UNIQUE on course_id; upserted on every pipeline run. VARCHAR used (not PG ENUM) to avoid non-transactional ALTER TYPE DDL on schema evolution.
 
 API Endpoints
 Sensors
@@ -139,6 +142,20 @@ GET /api/at-risk — list at-risk students (< 70%) with latest explanation; prof
 GET /api/at-risk/{student_id} — full summary + per-course breakdown
 POST /api/at-risk/recompute — admin only; fires pipeline, returns 202
 
+Forecasting (Phase 21)
+
+GET /api/forecasting — list all course forecasts; professor-filtered; ?course_id= param; fires pipeline in background
+GET /api/forecasting/{course_id} — single course forecast; 403 if not professor's course
+POST /api/forecasting/recompute — admin only; bypasses Redis lock, fires pipeline immediately, returns 202
+
+Laptop Mode (Webcam)
+
+GET /api/webcam/encodings — face encodings for all enrolled students (for laptop_recognition.py)
+POST /api/webcam/attendance — {student_id, status: present|absent, confidence} — no cooldown; respects adjusted_by
+POST /api/webcam/start-recognition — spawn laptop_recognition.py subprocess; stops backend recognition loop
+POST /api/webcam/stop-recognition — terminate subprocess
+GET /api/webcam/recognition-status — {running, pid}
+
 WebSocket
 
 WS /ws/classroom/{room_id} — streams sensor updates, attendance events, alerts
@@ -162,22 +179,36 @@ REQUIRE_AUTH=false                   # set true in production
 TEMP_AC_ON_THRESHOLD=28
 TEMP_AC_OFF_THRESHOLD=22
 AIR_QUALITY_ALERT_THRESHOLD=500
-FACE_RECOGNITION_THRESHOLD=0.6
+FACE_RECOGNITION_THRESHOLD=0.40
 RECOGNITION_FPS=2
 AT_RISK_THRESHOLD=0.70
+FORECAST_WINDOW=8                    # number of past ended sessions to include in trend
+ATTENDANCE_CYCLE_DURATION=60         # seconds per scan→evaluate cycle (snapshot-per-cycle model)
 
 Auto-Control Rules
 SensorConditionActionTemperature> 28°C + AC in auto modeTurn AC ONTemperature< 22°C + AC in auto modeTurn AC OFFAir quality> 500 ppmSend alert (no relay — no ventilation wired)SoundSilent > 30 min in active sessionSend attendance anomaly alertOccupancyheadcount > recognized_faces + 2Flag discrepancy for professor
 
 Face Recognition Logic
 Enrollment: Up to 5 images → Facenet 128-d encoding per image → averaged → stored as float32 BYTEA.
-Recognition loop (2fps on RPi): Detect faces → cosine distance against all stored encodings → match if < 0.6 → return student_id or UNKNOWN.
-Attendance recording: First match per session → create attendance_record (status=present) → 30s cooldown to prevent duplicates. UNKNOWN faces increment occupancy counter.
+Recognition loop — snapshot-per-cycle model (recognition_loop.py):
+  SCAN phase (ATTENDANCE_CYCLE_DURATION seconds at RECOGNITION_FPS): collect set of recognised student IDs (seen_this_cycle). WS event fired on first detection per student per cycle.
+  EVALUATE phase (one transaction): for every enrolled student — in seen_this_cycle → absent→present; not in set → present→absent. Records where adjusted_by IS NOT NULL are never touched.
+  Threshold: cosine distance < 0.40 (tightened from 0.60). UNKNOWN faces increment occupancy counter.
+  On session end: final evaluation runs with partial seen_this_cycle before loop stops.
 Stub Mode (FACE_RECOGNITION_ENABLED=false)
 
 Enrollment stores zeroed 128-d float32 placeholder.
-_stub_recognition_loop emits one synthetic attendance event every 45s for a random enrolled student.
+_stub_recognition_loop picks ~70% ± 2 of enrolled students randomly each cycle, calls _run_cycle_evaluation — exercises full bidirectional present↔absent logic.
 reload_encodings() is a no-op.
+
+Laptop Mode (laptop_recognition.py + webcam API)
+Host-side DeepFace script for development without an RPi camera. Fetches encodings via GET /api/webcam/encodings, posts status changes via POST /api/webcam/attendance.
+Key behaviours:
+  All enrolled students pre-seeded in last_seen at startup with ts = now − ABSENT_TIMEOUT so any student the camera doesn't see in the first pass is immediately marked absent.
+  last_posted_status deduplicates posts — only POSTs when status transitions (absent→present or present→absent).
+  ABSENT_TIMEOUT=5s: student absent from frame for 5s → POST absent.
+When Dashboard "Start Recognition" button is clicked: backend recognition loop (stub or real) is stopped first so the two systems never compete.
+webcam.py attendance endpoint: no Redis cooldown (last_posted_status is the dedup layer); respects adjusted_by IS NOT NULL (never overwrites professor manual adjustments).
 
 
 Mock Sensor Logic (MOCK_MODE=true)
@@ -236,11 +267,43 @@ Left panel (~320px): Scrollable student cards sorted by overall_attendance_rate 
 Right panel (detail): Student header → LLM summary card → per-course expandable cards (collapsed: code + name + rate pill; expanded: sessions_total, sessions_missed, avg_temp_on_missed, avg_aq_on_missed, peer delta, per-course text) → "Updated [relative time]" footer.
 Empty states: No at-risk students → illustrated "All students on track". Null explanation (Ollama down) → amber card with retry message. Admin recompute button with spinner.
 
+Forecasting Pipeline (Phase 21)
+Trigger
+Fired on-demand when GET /api/forecasting is called → asyncio.create_task(_maybe_run_pipeline()). Redis lock forecast:pipeline:lock (TTL 1800s / 30 min, SET NX EX) prevents pile-ups. POST /api/forecasting/recompute (admin only) bypasses the lock.
+Pipeline Steps
+
+Query all courses with ended-session count in one JOIN query
+Skip fresh rows — skip if generated_at < 1800s old and ollama_reachable=true
+Courses with < 3 ended sessions → write marker row (trend_data=[], generated_at=now()) so frontend polling terminates
+Compute trend data — single GROUP BY query: last FORECAST_WINDOW sessions, present+late / enrolled per session
+Classify trend deterministically — mean delta of attendance-rate sequence: < -0.02 → decline (accelerating if second half worsens); > +0.015 → recovering; else stable
+Call Ollama once per course — 2-line prompt response: EXPECTED_NEXT: <int> + INTERPRETATION: <sentence>
+Upsert attendance_forecasts
+
+Trend Classification Logic (deterministic)
+rates = chronological list of 0.0–1.0 fractions; deltas = consecutive differences
+mean_delta < -0.02: steady_decline (or accelerating_decline if second-half deltas are > 0.01 worse than first half)
+mean_delta > +0.015: recovering
+else: stable
+Confidence: high ≥ 6 sessions, medium ≥ 4, low < 4
+
+Reuses call_ollama and _check_ollama_ready from at_risk_engine directly — no duplication of Ollama HTTP logic.
+
+Forecasting Page — Frontend Specification
+
+Route: /forecasting | Nav: "Forecasting" with trend arrow SVG icon
+Access: All professors (filtered to their courses) + admins (all courses)
+
+Left panel (~320px): Scrollable course cards sorted by severity (accelerating_decline first). Each card: monospace course code, classification badge, course name, last attendance rate chip, "Updated X ago".
+Right panel (detail): Course header → Recharts AreaChart (linearGradient fill, 70% dashed ReferenceLine, optional projected "Next" point) → 3-col stats grid (sessions analyzed, expected next rate, confidence) → LLM interpretation glass-card → action banner (color-coded by suggested_action) → admin Recompute button.
+Empty states: No selection → prompt. Generating (null generated_at) → spinner. Insufficient history → informational card. Ollama down → amber warning.
+Auto-polls every 8s while any course has generated_at=null; stops when all populated.
+
 Phase Completion Status
-PhaseDescriptionStatus0Project scaffolding, Docker Compose, env setup✅1ESP32 firmware — sensors + MQTT publish✅2Backend foundation — FastAPI, DB models, MQTT bridge✅3Face recognition service + enrollment API✅4Session management + attendance engine✅5Control API + alert engine✅6Moodle sync service✅7WebSocket live streaming✅8React frontend✅9Integration testing + documentation✅10Full Docker deployment — nginx, Mosquitto, service wiring✅11Mock data fallback — backend publisher + frontend demo mode✅12Raspberry Pi setup runbook✅13Demo data seed script✅14JWT auth, professors table, role-based API filtering✅15Docker image slim — DeepFace/TF removed, stub, seed.py self-migrating✅16Professor Dashboard — session list + attendance table + sensor sparklines✅17Dashboard bug fixes — total_enrolled, key-based tab reset, count badges, MOCK_MODE✅18Full frontend visual redesign — CSS token system, typography, blue sidebar, Soft Structuralism✅19At-Risk Explanation — Ollama/phi3-mini, pipeline, DB table, At-Risk page✅20At-Risk pipeline performance — on-demand trigger, N+1 elimination, 1 LLM call/student, Redis cooldown, frontend auto-poll✅
+PhaseDescriptionStatus0Project scaffolding, Docker Compose, env setup✅1ESP32 firmware — sensors + MQTT publish✅2Backend foundation — FastAPI, DB models, MQTT bridge✅3Face recognition service + enrollment API✅4Session management + attendance engine✅5Control API + alert engine✅6Moodle sync service✅7WebSocket live streaming✅8React frontend✅9Integration testing + documentation✅10Full Docker deployment — nginx, Mosquitto, service wiring✅11Mock data fallback — backend publisher + frontend demo mode✅12Raspberry Pi setup runbook✅13Demo data seed script✅14JWT auth, professors table, role-based API filtering✅15Docker image slim — DeepFace/TF removed, stub, seed.py self-migrating✅16Professor Dashboard — session list + attendance table + sensor sparklines✅17Dashboard bug fixes — total_enrolled, key-based tab reset, count badges, MOCK_MODE✅18Full frontend visual redesign — CSS token system, typography, blue sidebar, Soft Structuralism✅19At-Risk Explanation — Ollama/phi3-mini, pipeline, DB table, At-Risk page✅20At-Risk pipeline performance — on-demand trigger, N+1 elimination, 1 LLM call/student, Redis cooldown, frontend auto-poll✅21LLM-Assisted Forecasting — deterministic trend classification + Ollama interpretation per course, attendance_forecasts table, Forecasting page with Recharts trend chart✅22Snapshot-per-cycle attendance — bidirectional present↔absent evaluation every ATTENDANCE_CYCLE_DURATION seconds; laptop_recognition.py two-system conflict resolved; adjusted_by guard; recognition threshold tightened to 0.40✅
 
 Key Architectural Decisions (selected highlights)
-DecisionReasonFastAPI over FlaskNative async for WebSocket + MQTTAll services on RPi (no cloud)Avoid latency, cost, internet dependencyasyncio-mqtt → aiomqttpaho-mqtt v2 broke asyncio-mqttDeepFace → stub in DockerTF pulls ~600MB, causes OOM on dev laptopsRedis for live sensor stateInstant dashboard load, no PostgreSQL hitdisplay_status computed, not storedLiveness changes over time with no DB writetokens.css separate from index.cssTailwind v3 can't resolve CSS vars at build timeGlassmorphism removedGPU-expensive, rendering artifacts in ChromiumInline SVG iconsNo icon library dependency, only 10–12 icons neededper_course_data as JSONBAlways read/written as unit with parent; avoids join; atomic upsertRedis lock TTL not deleted on completionPrevents re-run on every page refresh; natural ~10-min cooldown1 LLM call/student (not N+1)Reduced runtime from ~14 min to ~2–3 min for 8 studentsJWT in localStorageAcceptable on university intranet; simpler than httpOnly cookiesOn-demand pipeline (no cron)Cron meant no explanations until 02:00; on-demand generates immediately on page open
+DecisionReasonFastAPI over FlaskNative async for WebSocket + MQTTAll services on RPi (no cloud)Avoid latency, cost, internet dependencyasyncio-mqtt → aiomqttpaho-mqtt v2 broke asyncio-mqttDeepFace → stub in DockerTF pulls ~600MB, causes OOM on dev laptopsRedis for live sensor stateInstant dashboard load, no PostgreSQL hitdisplay_status computed, not storedLiveness changes over time with no DB writetokens.css separate from index.cssTailwind v3 can't resolve CSS vars at build timeGlassmorphism removedGPU-expensive, rendering artifacts in ChromiumInline SVG iconsNo icon library dependency, only 10–12 icons neededper_course_data as JSONBAlways read/written as unit with parent; avoids join; atomic upsertRedis lock TTL not deleted on completionPrevents re-run on every page refresh; natural ~10-min cooldown1 LLM call/student (not N+1)Reduced runtime from ~14 min to ~2–3 min for 8 studentsJWT in localStorageAcceptable on university intranet; simpler than httpOnly cookiesOn-demand pipeline (no cron)Cron meant no explanations until 02:00; on-demand generates immediately on page openDeterministic trend classification (no LLM)LLM output format is unreliable for structured values; delta math is fast and always correctVARCHAR(30) not PG ENUM for classificationALTER TYPE ADD VALUE is non-transactional in PostgreSQL; VARCHAR avoids DDL migrations on schema evolutionMarker rows for courses with < 3 sessionsWithout a row the frontend poll condition (some c => !c.generated_at) never resolves; marker rows terminate the poll immediately1 LLM call per course (interpretation only)Classification and confidence are computed deterministically; LLM writes only prose + projected rateSnapshot-per-cycle attendance (not one-shot)One-shot model couldn't detect students leaving mid-session; bidirectional UPDATE with adjusted_by guard gives accurate continuous evaluationNo Redis cooldown in webcam.py attendance endpointlast_posted_status in laptop_recognition.py is the dedup layer; backend cooldown silently dropped present→absent transitions and had no retry pathStop backend loop when laptop_recognition.py startsTwo competing writers to attendance_records caused random stub overrides; mutual exclusion enforced at subprocess spawn timePre-seed last_seen at laptop_recognition.py startupStudents marked present by prior systems (stub loop) were never in last_seen so timeout never fired; seeding with now−ABSENT_TIMEOUT gives immediate absent-marking for undetected students
 
 Known Issues & Limitations
 IssueWorkaroundCamera fails on non-PiStub mode replaces recognition loop transparentlyMQ-135 uncalibratedValues are comparative; threshold empirically set at 500DeepFace inference slow on RPi 4Keep RECOGNITION_FPS=2; upgrade to RPi 5 for better throughputMQTT QoS 0 (sensor loss during broker restart)Dashboard shows stale Redis data until next messageSingle-room designChange ROOM_ID in config.h + .envNo HTTPS/WSSAdd nginx SSL termination for public deploymentphi3-mini slow on RPi CPU (~10–30s/student)Frontend progressive polling every 8sphi3-mini first-run pull (~2GB)Startup pull non-blocking; re-open page after pull completes

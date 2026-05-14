@@ -1,4 +1,5 @@
 import enum
+from datetime import datetime
 
 from sqlalchemy import (
     Boolean,
@@ -11,6 +12,7 @@ from sqlalchemy import (
     String,
     Table,
     Text,
+    UniqueConstraint,
     text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
@@ -137,6 +139,9 @@ class Course(Base):
     students: Mapped[list["Student"]] = relationship(
         secondary=course_students, back_populates="courses"
     )
+    attendance_forecast: Mapped["AttendanceForecast | None"] = relationship(
+        back_populates="course", uselist=False, cascade="all, delete-orphan"
+    )
 
 
 class Session(Base):
@@ -165,6 +170,9 @@ class Session(Base):
 
 class AttendanceRecord(Base):
     __tablename__ = "attendance_records"
+    __table_args__ = (
+        UniqueConstraint("session_id", "student_id", name="uq_attendance_session_student"),
+    )
 
     id: Mapped[str] = mapped_column(
         String(36), primary_key=True, server_default=text("gen_random_uuid()")
@@ -249,7 +257,30 @@ class AtRiskExplanation(Base):
     overall_attendance_rate: Mapped[float] = mapped_column(Float, nullable=False)
     summary_explanation: Mapped[str | None] = mapped_column(Text, nullable=True)
     per_course_data: Mapped[dict] = mapped_column(JSONB, nullable=False)
-    generated_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), nullable=False)
+    generated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     ollama_reachable: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
 
     student: Mapped["Student"] = relationship(back_populates="at_risk_explanation")
+
+
+class AttendanceForecast(Base):
+    __tablename__ = "attendance_forecasts"
+
+    id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, server_default=text("gen_random_uuid()")
+    )
+    course_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("courses.id", ondelete="CASCADE"), unique=True, nullable=False
+    )
+    # [{"session_date": "ISO-datetime", "rate": 0.82}, ...] — rates as 0.0–1.0 fractions
+    trend_data: Mapped[list] = mapped_column(JSONB, nullable=False)
+    expected_next_rate: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # VARCHAR avoids PostgreSQL ALTER TYPE DDL when adding new classifications
+    trend_classification: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    confidence_level: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    interpretation: Mapped[str | None] = mapped_column(Text, nullable=True)
+    suggested_action: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    ollama_reachable: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    generated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    course: Mapped["Course"] = relationship(back_populates="attendance_forecast")

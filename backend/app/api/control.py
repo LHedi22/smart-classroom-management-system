@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from app.api.deps import require_admin
+from app.api.deps import get_current_professor
 from app.models.db_models import Professor
 from app.models.schemas import ControlStatusResponse, RelayCommand, RelayCommandResponse
 from app.redis_client import get_relay_state, get_redis_pool, get_sensor_latest, is_device_online, set_relay_state
@@ -29,9 +29,11 @@ def _now_utc() -> datetime:
 
 
 # ── POST /api/control/ac ──────────────────────────────────────────────────
+# Any authenticated professor may control classroom equipment.
+# Admin-only access was in place previously; relaxed in Phase 21 to match UX spec.
 
 @router.post("/ac", response_model=RelayCommandResponse)
-async def control_ac(body: RelayCommand, _: Professor = Depends(require_admin)) -> RelayCommandResponse:
+async def control_ac(body: RelayCommand, _: Professor = Depends(get_current_professor)) -> RelayCommandResponse:
     await set_relay_state(body.room_id, "ac", body.action)
     asyncio.create_task(_send_relay_command(body.room_id, "ac", body.action))
     return RelayCommandResponse(
@@ -45,7 +47,7 @@ async def control_ac(body: RelayCommand, _: Professor = Depends(require_admin)) 
 # ── POST /api/control/lighting ────────────────────────────────────────────
 
 @router.post("/lighting", response_model=RelayCommandResponse)
-async def control_lighting(body: RelayCommand, _: Professor = Depends(require_admin)) -> RelayCommandResponse:
+async def control_lighting(body: RelayCommand, _: Professor = Depends(get_current_professor)) -> RelayCommandResponse:
     await set_relay_state(body.room_id, "lighting", body.action)
     asyncio.create_task(_send_relay_command(body.room_id, "lighting", body.action))
     return RelayCommandResponse(

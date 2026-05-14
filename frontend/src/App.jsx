@@ -9,6 +9,7 @@ import Enrollment from './pages/Enrollment'
 import History from './pages/History'
 import Insights from './pages/Insights'
 import AtRisk from './pages/AtRisk'
+import Forecasting from './pages/Forecasting'
 
 function ProtectedRoute({ children }) {
   const { isAuthenticated } = useAuth()
@@ -39,7 +40,8 @@ export default function App() {
           <Route path="enrollment" element={<Enrollment />} />
           <Route path="history"    element={<History />} />
           <Route path="insights"   element={<Insights />} />
-          <Route path="at-risk"    element={<AtRisk />} />
+          <Route path="at-risk"      element={<AtRisk />} />
+          <Route path="forecasting"  element={<Forecasting />} />
         </Route>
         <Route path="*" element={<Navigate to="/dashboard" replace />} />
       </Routes>

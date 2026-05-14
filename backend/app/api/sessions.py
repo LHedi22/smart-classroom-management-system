@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func, select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -169,6 +170,26 @@ async def start_session(
     await db.commit()
     await db.refresh(session)
 
+    # Pre-fill absent records for every enrolled student so the roster is complete
+    # from the moment recognition starts. Recognition flips absent → present.
+    enrolled_q = await db.execute(
+        select(Student.id)
+        .join(course_students, Student.id == course_students.c.student_id)
+        .where(course_students.c.course_id == body.course_id)
+    )
+    enrolled_ids = [row[0] for row in enrolled_q.all()]
+    if enrolled_ids:
+        absent_stmt = (
+            pg_insert(AttendanceRecord)
+            .values([
+                {"session_id": session.id, "student_id": sid, "status": AttendanceStatus.absent}
+                for sid in enrolled_ids
+            ])
+            .on_conflict_do_nothing(index_elements=["session_id", "student_id"])
+        )
+        await db.execute(absent_stmt)
+        await db.commit()
+
     try:
         from app.services.recognition_loop import start_recognition
         asyncio.create_task(start_recognition(session.id, session.room_id))
@@ -192,14 +213,52 @@ async def end_session(session_id: str, db: AsyncSession = Depends(get_db)) -> Se
     await db.refresh(session)
 
     try:
-        from app.services.recognition_loop import stop_recognition
+        from app.services.recognition_loop import (
+            get_current_seen_ids,
+            stop_recognition,
+            _run_cycle_evaluation,
+        )
+        seen = get_current_seen_ids()
+        asyncio.create_task(_run_cycle_evaluation(session.id, seen))
         asyncio.create_task(stop_recognition())
     except Exception as exc:
         logger.warning("Could not stop recognition loop: %s", exc)
 
     _sid = session.id
+    _course_id = session.course_id
 
-    async def _bg_sync() -> None:
+    async def _bg_finalize() -> None:
+        # Step 1: materialize absent records for all unrecorded enrolled students.
+        # Using ON CONFLICT DO NOTHING so present/late records are never overwritten.
+        try:
+            from app.database import AsyncSessionLocal
+            async with AsyncSessionLocal() as _db:
+                enrolled_q = await _db.execute(
+                    select(Student.id)
+                    .join(course_students, Student.id == course_students.c.student_id)
+                    .where(course_students.c.course_id == _course_id)
+                )
+                enrolled_ids = [row[0] for row in enrolled_q.all()]
+                if enrolled_ids:
+                    stmt = (
+                        pg_insert(AttendanceRecord)
+                        .values([
+                            {
+                                "session_id": _sid,
+                                "student_id": sid,
+                                "status": AttendanceStatus.absent,
+                            }
+                            for sid in enrolled_ids
+                        ])
+                        .on_conflict_do_nothing(index_elements=["session_id", "student_id"])
+                    )
+                    await _db.execute(stmt)
+                    await _db.commit()
+                    logger.info("Auto mark-absent completed for session %s", _sid)
+        except Exception as exc:
+            logger.warning("Auto mark-absent failed for session %s: %s", _sid, exc)
+
+        # Step 2: sync the now-complete roster to Moodle.
         try:
             from app.services.moodle_client import moodle_client
             result = await moodle_client.sync_attendance(_sid)
@@ -207,7 +266,7 @@ async def end_session(session_id: str, db: AsyncSession = Depends(get_db)) -> Se
         except Exception as exc:
             logger.warning("Auto Moodle sync failed for session %s: %s", _sid, exc)
 
-    asyncio.create_task(_bg_sync())
+    asyncio.create_task(_bg_finalize())
     return session
 
 

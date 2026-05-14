@@ -4,7 +4,7 @@ import {
 } from 'recharts'
 import { useSensor } from '../context/SensorContext'
 import DemoModeBanner from '../components/DemoModeBanner'
-import { getSessions, getSession } from '../api/sessions'
+import { getSessions } from '../api/sessions'
 import { getSessionSensorsLatest, getSessionSensorsSummary } from '../api/sensors'
 import client from '../api/client'
 
@@ -152,38 +152,117 @@ function SessionGroup({ title, sessions, selectedId, onSelect }) {
 
 function AttendanceTab({ sessionId, isLive }) {
   const { attendance: wsAttendance } = useSensor()
-  const [detail,  setDetail]  = useState(null)
-  const [loading, setLoading] = useState(true)
-  const [error,   setError]   = useState(null)
+  const [records,    setRecords]    = useState([])
+  const [loading,    setLoading]    = useState(true)
+  const [error,      setError]      = useState(null)
+  const [recogRunning, setRecogRunning] = useState(false)
+  const [recogBusy,    setRecogBusy]   = useState(false)
+
+  // Always-current ref so the async init can read the latest WS events at resolve time
+  const wsAttendanceRef = useRef([])
+  useEffect(() => { wsAttendanceRef.current = wsAttendance }, [wsAttendance])
 
   useEffect(() => {
     if (!sessionId) return
     setLoading(true)
     setError(null)
-    setDetail(null)
-    getSession(sessionId)
-      .then(d => setDetail(d))
-      .catch(() => setError('Failed to load attendance'))
-      .finally(() => setLoading(false))
+    setRecords([])
+    const init = async () => {
+      try {
+        await client.post(`/sessions/${sessionId}/mark-absent`)
+      } catch {}
+      try {
+        const r = await client.get(`/sessions/${sessionId}/attendance`)
+        // Apply any WS events that arrived during loading — avoids the race condition
+        // where events fire before records are set and the WS effect has nothing to patch
+        const pending = wsAttendanceRef.current
+        const roster = pending.length
+          ? r.data.map(rec => {
+              const ev = pending.find(e => e.student_id === rec.student_id)
+              return ev && rec.status !== 'present'
+                ? { ...rec, status: ev.status ?? 'present', detected_at: ev.detected_at }
+                : rec
+            })
+          : r.data
+        setRecords(roster)
+      } catch {
+        setError('Failed to load attendance')
+      } finally {
+        setLoading(false)
+      }
+    }
+    init()
   }, [sessionId])
 
+  // Polling fallback for live sessions — patches only changed rows, no flicker
   useEffect(() => {
-    if (!isLive || !wsAttendance.length || !detail) return
-    setDetail(prev => {
-      if (!prev) return prev
-      const merged = [...prev.attendance]
-      wsAttendance.forEach(ev => {
-        if (!merged.some(r => r.student_id === ev.student_id)) {
-          merged.unshift({
-            student_id: ev.student_id,
-            name: ev.student_name ?? ev.student_id,
-            student_number: '',
-            status: ev.status ?? 'present',
-            detected_at: ev.detected_at,
+    if (!isLive || !sessionId) return
+    const id = setInterval(async () => {
+      try {
+        const r = await client.get(`/sessions/${sessionId}/attendance`)
+        setRecords(prev => {
+          const byStudent = Object.fromEntries(r.data.map(s => [s.student_id, s]))
+          let changed = false
+          const next = prev.map(rec => {
+            const fresh = byStudent[rec.student_id]
+            if (!fresh || fresh.status === rec.status) return rec
+            changed = true
+            return fresh
           })
-        }
+          return changed ? next : prev
+        })
+      } catch {}
+    }, 3000)
+    return () => clearInterval(id)
+  }, [sessionId, isLive])
+
+  const LAUNCHER = 'http://localhost:8001'
+
+  useEffect(() => {
+    if (!isLive) return
+    fetch(`${LAUNCHER}/status`)
+      .then(r => r.json())
+      .then(d => setRecogRunning(d.running))
+      .catch(() => {})
+  }, [isLive, sessionId])
+
+  async function toggleRecognition() {
+    setRecogBusy(true)
+    try {
+      const path = recogRunning ? '/stop' : '/start'
+      const r = await fetch(`${LAUNCHER}${path}`, { method: 'POST' })
+      const d = await r.json()
+      if (d.error) throw new Error(d.error)
+      setRecogRunning(d.running)
+
+      if (d.running) {
+        // Ensure all enrolled students have an absent record, then refresh the
+        // full roster so every student is visible before recognition flips them.
+        try { await client.post(`/sessions/${sessionId}/mark-absent`) } catch {}
+        try {
+          const roster = await client.get(`/sessions/${sessionId}/attendance`)
+          setRecords(roster.data)
+        } catch {}
+      }
+    } catch (e) {
+      alert(e.message ?? 'Could not reach demo launcher. Run: python demo_launcher.py')
+    } finally {
+      setRecogBusy(false)
+    }
+  }
+
+  // WS live updates: flip the matching virtual absent entry → present in-place
+  useEffect(() => {
+    if (!isLive || !wsAttendance.length) return
+    setRecords(prev => {
+      let changed = false
+      const next = prev.map(r => {
+        const ev = wsAttendance.find(e => e.student_id === r.student_id)
+        if (!ev || r.status === 'present') return r
+        changed = true
+        return { ...r, status: ev.status ?? 'present', detected_at: ev.detected_at }
       })
-      return { ...prev, attendance: merged }
+      return changed ? next : prev
     })
   }, [wsAttendance, sessionId, isLive])
 
@@ -208,7 +287,6 @@ function AttendanceTab({ sessionId, isLive }) {
     </div>
   )
 
-  const records = detail?.attendance ?? []
   const present = records.filter(r => r.status === 'present').length
 
   if (records.length === 0) return (
@@ -221,23 +299,52 @@ function AttendanceTab({ sessionId, isLive }) {
           <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
         </svg>
       </div>
-      <p className="empty-state-title">No attendance records yet</p>
-      <p className="empty-state-desc">
-        {detail?.total_enrolled > 0
-          ? `${detail.total_enrolled} students enrolled — face recognition will populate this list.`
-          : 'Records appear here as students are recognized.'}
-      </p>
+      <p className="empty-state-title">No students enrolled</p>
+      <p className="empty-state-desc">Enroll students in this course to see their attendance here.</p>
     </div>
   )
 
   return (
     <div>
+      {/* Demo: auto attendance button — live sessions only */}
+      {isLive && (
+        <div style={{
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          gap: 12, marginBottom: 12,
+          padding: '8px 12px', borderRadius: 8,
+          border: `1px dashed ${recogRunning ? 'rgba(0,122,119,0.45)' : 'rgba(255,183,0,0.45)'}`,
+          background: recogRunning ? 'rgba(0,122,119,0.06)' : 'rgba(255,183,0,0.05)',
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+            {recogRunning && (
+              <span style={{
+                width: 7, height: 7, borderRadius: '50%',
+                background: 'var(--color-teal)', display: 'inline-block',
+                animation: 'pulse-dot 2.2s ease-in-out infinite',
+              }} />
+            )}
+            <span style={{ fontSize: 11, fontWeight: 600, color: recogRunning ? '#007A77' : '#7A5B00' }}>
+              {recogRunning ? 'Face recognition running…' : 'Live Demo — Automated Attendance'}
+            </span>
+          </div>
+          <button
+            onClick={toggleRecognition}
+            disabled={recogBusy}
+            style={{
+              fontSize: 11, fontWeight: 700, padding: '4px 12px', borderRadius: 6,
+              border: 'none', cursor: recogBusy ? 'not-allowed' : 'pointer',
+              background: recogRunning ? 'var(--color-red)' : 'var(--color-teal)',
+              color: '#fff', opacity: recogBusy ? 0.6 : 1, transition: 'opacity 0.15s',
+            }}
+          >
+            {recogBusy ? '…' : recogRunning ? 'Stop' : 'Start Recognition'}
+          </button>
+        </div>
+      )}
+
       <p style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 12 }}>
         <span style={{ color: 'var(--color-forest)', fontWeight: 700 }}>{present}</span>
-        {' '}/ {records.length} students recorded
-        {detail?.total_enrolled > 0 && (
-          <span style={{ color: 'var(--color-text-muted)' }}> ({detail.total_enrolled} enrolled)</span>
-        )}
+        {' / '}{records.length} enrolled
       </p>
       <div style={{ overflowY: 'auto', maxHeight: '52vh' }}>
         <table style={{ width: '100%', fontSize: 13, borderCollapse: 'collapse' }}>
@@ -250,16 +357,28 @@ function AttendanceTab({ sessionId, isLive }) {
             </tr>
           </thead>
           <tbody>
-            {records.map((r, i) => (
-              <tr key={r.student_id + i} className="table-row">
-                <td style={{ padding: '11px 12px', fontWeight: 600, color: 'var(--color-text-primary)' }}>{r.name}</td>
-                <td style={{ padding: '11px 12px', color: 'var(--color-text-muted)', fontSize: 12, fontFamily: 'monospace' }}>{r.student_number || '—'}</td>
-                <td style={{ padding: '11px 12px' }}>
-                  <span className={STATUS_CHIP[r.status] ?? STATUS_CHIP.absent}>{r.status}</span>
-                </td>
-                <td style={{ padding: '11px 12px', color: 'var(--color-text-muted)', fontSize: 12 }}>{fmt(r.detected_at)}</td>
-              </tr>
-            ))}
+            {records.map(r => {
+              const isVirtual = !r.id
+              return (
+                <tr key={r.id ?? `virtual-${r.student_id}`} className="table-row" style={{ opacity: isVirtual ? 0.72 : 1 }}>
+                  <td style={{ padding: '11px 12px', fontWeight: 600, color: 'var(--color-text-primary)' }}>
+                    {r.student_name || r.name}
+                  </td>
+                  <td style={{ padding: '11px 12px', color: 'var(--color-text-muted)', fontSize: 12, fontFamily: 'monospace' }}>
+                    {r.student_number || '—'}
+                  </td>
+                  <td style={{ padding: '11px 12px' }}>
+                    <span className={STATUS_CHIP[r.status] ?? STATUS_CHIP.absent}>{r.status}</span>
+                  </td>
+                  <td style={{ padding: '11px 12px', color: 'var(--color-text-muted)', fontSize: 12 }}>
+                    {isVirtual
+                      ? <span style={{ fontStyle: 'italic', fontSize: 11 }}>not detected</span>
+                      : fmt(r.detected_at)
+                    }
+                  </td>
+                </tr>
+              )
+            })}
           </tbody>
         </table>
       </div>

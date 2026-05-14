@@ -156,6 +156,23 @@ class AttendanceWithStudent(AttendanceRecordResponse):
     student_number: str = ""  # institutional ID
 
 
+class AttendanceRosterEntry(BaseModel):
+    """Returned by GET /sessions/{id}/attendance — covers every enrolled student.
+
+    id is None for students not yet detected (virtual absent entries).
+    """
+    id: str | None = None
+    session_id: str
+    student_id: str
+    status: AttendanceStatus
+    detected_at: datetime | None = None
+    adjusted_by: str | None = None
+    adjusted_at: datetime | None = None
+    moodle_synced: bool = False
+    student_name: str = ""
+    student_number: str = ""
+
+
 class AttendanceAdjust(BaseModel):
     status: AttendanceStatus
 
@@ -371,5 +388,52 @@ class AtRiskStudentResponse(BaseModel):
     per_course_data: list[PerCourseRisk]
     generated_at: datetime | None
     ollama_reachable: bool
+
+    model_config = {"from_attributes": True}
+
+
+# ── Webcam / Laptop Mode ──────────────────────────────────────────────────
+
+class WebcamEncodingEntry(BaseModel):
+    student_id: str
+    name: str
+    encoding_b64: str  # base64-encoded float32 numpy bytes (128-d)
+
+
+class WebcamAttendanceRequest(BaseModel):
+    student_id: str
+    status: str          # "present" or "absent"
+    confidence: float
+
+
+class WebcamAttendanceResponse(BaseModel):
+    recorded: bool
+
+
+class WebcamEnrollRequest(BaseModel):
+    student_id: str    # DB UUID
+    encoding_b64: str  # base64(float32_bytes) — must decode to exactly 512 bytes (128 × 4)
+
+
+# ── Attendance Forecasting ─────────────────────────────────────────────────
+
+class TrendDataPoint(BaseModel):
+    session_date: str  # ISO datetime string
+    rate: float        # 0.0–1.0 fraction
+
+
+class CourseForecastResponse(BaseModel):
+    course_id: str
+    course_code: str
+    course_name: str
+    trend_data: list[TrendDataPoint]
+    sessions_analyzed: int          # len(trend_data); 0 = insufficient session history
+    expected_next_rate: float | None
+    trend_classification: str | None
+    confidence_level: str | None
+    interpretation: str | None
+    suggested_action: str | None
+    ollama_reachable: bool
+    generated_at: datetime | None
 
     model_config = {"from_attributes": True}

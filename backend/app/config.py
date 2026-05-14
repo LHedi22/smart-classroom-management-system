@@ -23,6 +23,7 @@ class Settings(BaseSettings):
     room_id: str = "room1"
     mock_mode: bool = False
     face_recognition_enabled: bool = False
+    laptop_mode: bool = False  # Webcam runs as standalone host script; ESP32 → laptop MQTT broker
 
     # Auth
     access_token_expire_minutes: int = 480  # 8 hours
@@ -32,7 +33,7 @@ class Settings(BaseSettings):
     temp_ac_on_threshold: float = 28.0
     temp_ac_off_threshold: float = 22.0
     air_quality_alert_threshold: int = 500
-    face_recognition_threshold: float = 0.6
+    face_recognition_threshold: float = 0.40
     recognition_fps: int = 2
 
     # Ollama LLM
@@ -42,6 +43,12 @@ class Settings(BaseSettings):
 
     # At-risk detection
     at_risk_threshold: float = 0.70
+
+    # Attendance forecasting
+    forecast_window: int = 8  # FORECAST_WINDOW — number of past sessions to include in trend
+
+    # Attendance cycle (snapshot-per-cycle model)
+    attendance_cycle_duration: int = 60  # seconds per scan→evaluate cycle
 
 
 settings = Settings()

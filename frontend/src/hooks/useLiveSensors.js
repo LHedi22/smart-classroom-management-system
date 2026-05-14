@@ -64,15 +64,20 @@ export default function useLiveSensors() {
           [msg.sensor_type]: { value: msg.value, unit: msg.unit },
         }))
         break
-      case 'attendance':
+      case 'attendance': {
+        const entry = { ...msg, detected_at: msg.detected_at ?? new Date().toISOString() }
         setAttendance(prev => {
-          const dup = prev.some(
+          const idx = prev.findIndex(
             r => r.student_id === msg.student_id && r.session_id === msg.session_id
           )
-          if (dup) return prev
-          return [{ ...msg, detected_at: new Date().toISOString() }, ...prev]
+          if (idx === -1) return [entry, ...prev]
+          if (prev[idx].status === msg.status) return prev  // genuine duplicate
+          const next = [...prev]
+          next[idx] = entry  // status changed — update in place
+          return next
         })
         break
+      }
       case 'alert':
         setAlerts(prev => [{ ...msg, created_at: new Date().toISOString() }, ...prev].slice(0, 50))
         break

@@ -126,7 +126,7 @@ services:
       MOODLE_TOKEN: ""
       SECRET_KEY: changeme
       ROOM_ID: room1
-      MOCK_MODE: "true"
+      MOCK_MODE: "${MOCK_MODE:-false}"
       ACCESS_TOKEN_EXPIRE_MINUTES: "480"
       REQUIRE_AUTH: "false"
       TEMP_AC_ON_THRESHOLD: "28"
@@ -134,8 +134,9 @@ services:
       AIR_QUALITY_ALERT_THRESHOLD: "500"
       FACE_RECOGNITION_THRESHOLD: "0.6"
       RECOGNITION_FPS: "2"
+      LAPTOP_MODE: "${LAPTOP_MODE:-false}"
       OLLAMA_BASE_URL: "http://ollama:11434"
-      OLLAMA_MODEL: "phi3:latest"
+      OLLAMA_MODEL: "phi3:mini"
 
   # ── React Frontend (nginx) ────────────────────────────────────────────────
   frontend:
